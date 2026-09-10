@@ -4,3 +4,5 @@ __pycache__/
 venv/
 .env
 mijn-values.yaml
+gridstatic-values.yaml
+gridstatic-values.yaml.bak

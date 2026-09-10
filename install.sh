@@ -103,7 +103,24 @@ fi
 stap "Je database"
 
 DB_URL="${GRIDSTATIC_DB_URL:-}"
-if [ -z "$DB_URL" ]; then
+
+# Een herinstallatie is een gewoon geval: helm uninstall haalt alleen weg wat Helm
+# zelf heeft aangemaakt, dus het secret staat er meestal nog. Dan hoef je je
+# connectiestring niet opnieuw op te zoeken.
+HERGEBRUIK=0
+if [ -z "$DB_URL" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1    && kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null 2>&1; then
+  zeg "  Er staat al een secret $DB_SECRET in namespace $NAMESPACE."
+  printf '  Dat gebruiken? [J/n]: '
+  read -r antwoord
+  case "$antwoord" in
+    n|N) : ;;
+    *)   HERGEBRUIK=1 ;;
+  esac
+fi
+
+if [ "$HERGEBRUIK" = 1 ]; then
+  goed "bestaand secret hergebruikt — je connectiestring is niet opnieuw nodig"
+elif [ -z "$DB_URL" ]; then
   cat <<'EOF'
   Je hebt een eigen PostgreSQL nodig; een gratis Supabase-project volstaat.
   Pak in het dashboard onder "Connect" de SESSION POOLER-string:
@@ -122,15 +139,17 @@ EOF
   printf '\n'
 fi
 
-[ -n "$DB_URL" ] || stop "geen connectiestring opgegeven"
-case "$DB_URL" in
-  postgresql://*|postgres://*) : ;;
-  *) stop "dat ziet er niet uit als een connectiestring (verwacht postgresql://...)" ;;
-esac
-case "$DB_URL" in
-  *:6543/*) let_op "je gebruikt de transaction pooler (6543); de session pooler op 5432 past beter bij een langlopende service" ;;
-esac
-goed "connectiestring ontvangen (${#DB_URL} tekens)"
+if [ "$HERGEBRUIK" = 0 ]; then
+  [ -n "$DB_URL" ] || stop "geen connectiestring opgegeven"
+  case "$DB_URL" in
+    postgresql://*|postgres://*) : ;;
+    *) stop "dat ziet er niet uit als een connectiestring (verwacht postgresql://...)" ;;
+  esac
+  case "$DB_URL" in
+    *:6543/*) let_op "je gebruikt de transaction pooler (6543); de session pooler op 5432 past beter bij een langlopende service" ;;
+  esac
+  goed "connectiestring ontvangen (${#DB_URL} tekens)"
+fi
 
 # ── 3. Namespace ─────────────────────────────────────────────────────────────
 stap "Namespace $NAMESPACE"
@@ -157,8 +176,12 @@ maak_secret() {
     --from-literal=url="$DB_URL" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
-maak_secret
-[ "$DRY_RUN" = 0 ] && goed "aangemaakt of bijgewerkt"
+if [ "$HERGEBRUIK" = 1 ]; then
+  goed "ongewijzigd gelaten"
+else
+  maak_secret
+  [ "$DRY_RUN" = 0 ] && goed "aangemaakt of bijgewerkt"
+fi
 
 # ── 5. Waarden ───────────────────────────────────────────────────────────────
 stap "Waardenbestand $VALUES_FILE"
