@@ -42,8 +42,9 @@ jobs:
 
       - name: Standaard draait alles in shadow
         run: |
-          if helm template t ./chart --set database.existingSecret=test-db-secret \
-               | grep -q "shadow: false"; then
+          # Commentaarregels in de templates noemen "shadow: false" om uit te leggen
+          # wat het doet. Alleen echte instellingen tellen, dus commentaar eruit.
+          if helm template t ./chart --set database.existingSecret=test-db-secret | grep -v '^[[:space:]]*#' | grep -q "shadow: false"; then
             echo "FOUT: de meegeleverde waarden zetten een grid op shadow: false"
             exit 1
           fi
