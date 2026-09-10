@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-grid-static
+spec:
+  replicas: 1
+  # Recreate, niet RollingUpdate: twee pods die dezelfde grid beheren zouden
+  # dubbele orders leggen.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-grid-static }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }}-grid-static }
+      annotations:
+        # Zonder deze checksum verandert de deployment niet als je alleen de grids
+        # aanpast, en blijft de oude settings.yaml in de draaiende pod staan.
+        checksum/settings: {{ include (print $.Template.BasePath "/configmap-settings.yaml") . | sha256sum }}
+    spec:
+      nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.scheduling.tolerations | nindent 8 }}
+      containers:
+        - name: grid-static
+          image: "{{ .Values.images.gridStatic.repository }}:{{ .Values.images.gridStatic.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+            - name: settings
+              mountPath: /app/config/settings.yaml
+              subPath: settings.yaml
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: settings
+          configMap:
+            name: {{ .Release.Name }}-settings
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-grid-static
+spec:
+  selector: { app: {{ .Release.Name }}-grid-static }
+  ports:
+    - port: 8080
+      targetPort: 8080

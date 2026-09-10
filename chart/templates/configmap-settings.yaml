@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-settings
+data:
+  settings.yaml: |
+    connector_url: http://{{ .Release.Name }}-connector:8080
+    dal_url: http://{{ .Release.Name }}-dal:8080
+    alerter_url: http://{{ .Release.Name }}-alerter:8080
+
+    strategy_allocation_pct: {{ .Values.grid.strategyAllocationPct }}
+    start_balance: {{ .Values.grid.startBalance }}
+
+    coins:
+    {{- range $key, $c := .Values.grid.coins }}
+      {{ $key }}:
+        coin: {{ $c.coin }}
+        active: {{ $c.active }}
+        shadow: {{ $c.shadow }}
+        allocation_pct: {{ $c.allocationPct }}
+        upper: {{ $c.upper }}
+        lower: {{ $c.lower }}
+        num_lines: {{ $c.numLines }}
+        leverage: {{ $c.leverage }}
+    {{- end }}
+
+    fills_poll_interval_seconds: {{ .Values.grid.fillsPollIntervalSeconds }}
+    health_check_interval_seconds: {{ .Values.grid.healthCheckIntervalSeconds }}

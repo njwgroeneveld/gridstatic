@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-connector
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-connector }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }}-connector }
+    spec:
+      nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.scheduling.tolerations | nindent 8 }}
+      containers:
+        - name: connector
+          image: "{{ .Values.images.connector.repository }}:{{ .Values.images.connector.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: HYPERLIQUID_TESTNET
+              value: {{ .Values.hyperliquid.testnet | quote }}
+            # Een lege sleutel is geen probleem: de exchange-client wordt pas bij de
+            # eerste order-aanroep gebouwd. Tot die tijd geven de order-routes een 503
+            # en blijven de info-routes werken via de publieke API.
+            - name: HL_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-hyperliquid, key: private_key }
+            - name: WALLET_ADDRESS
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-hyperliquid, key: wallet_address }
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-connector
+spec:
+  selector: { app: {{ .Release.Name }}-connector }
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -1,0 +1,75 @@
+images:
+  gridStatic:
+    repository: ghcr.io/njwgroeneveld/gridstatic-grid-static
+    tag: latest
+  dal:
+    repository: ghcr.io/njwgroeneveld/gridstatic-dal
+    tag: latest
+  connector:
+    repository: ghcr.io/njwgroeneveld/gridstatic-connector
+    tag: latest
+  alerter:
+    repository: ghcr.io/njwgroeneveld/gridstatic-telegram-alerter
+    tag: latest
+  pullPolicy: Always
+
+database:
+  # Verplicht. Je eigen Supabase-project, of een andere Postgres.
+  # Gebruik de DIRECTE connectiestring (poort 5432), niet de pooler op 6543:
+  # psycopg2 gebruikt prepared statements en die gaan slecht samen met
+  # transaction pooling. Zet sslmode=require.
+  #
+  # LET OP: wijs dit nooit naar een database waarin al een andere gridstatic-stack
+  # werkt. Die stack heeft daar actieve grid_configs staan; deze bot herkent ze als
+  # de zijne en gaat dezelfde grids beheren. Twee bots op één grid betekent dubbele
+  # orders. Een eigen Supabase-project kost je twee minuten.
+  url: ""
+
+hyperliquid:
+  testnet: true
+  # Leeg laten mag. Zonder sleutel bouwt de connector geen exchange-client en geven
+  # zijn order-routes een 503 -- genoeg voor shadow, want daar wordt niets besteld.
+  walletAddress: ""
+  privateKey: ""
+
+telegram:
+  # Uit: dan komt de alerter-pod er niet en mislukken de alert-aanroepen stil.
+  enabled: false
+  botToken: ""
+  chatId: ""
+
+grid:
+  strategyAllocationPct: 80
+  # Rekenbasis voor de ordergrootte, ook live -- niet alleen in shadow.
+  # Zet dit op het bedrag dat je aan deze stack wilt toevertrouwen. Bij 20 lijnen
+  # en 80% allocatie is 1000 gelijk aan $40 per lijn.
+  startBalance: 1000
+  fillsPollIntervalSeconds: 30
+  healthCheckIntervalSeconds: 60
+  # De sleutel is een vrij te kiezen label; hij komt alleen in de logregels terug.
+  # Het gedrag komt uit de velden eronder.
+  coins:
+    BTC-20:
+      coin: BTC
+      active: true
+      # shadow: false betekent handelen met echt geld. Samen met een ingevulde
+      # privateKey zijn dit de twee stappen naar live -- allebei met opzet apart.
+      shadow: true
+      allocationPct: 100
+      upper: 83000
+      lower: 75000
+      numLines: 20
+      leverage: 1
+
+scheduling:
+  # Leeg: de scheduler kiest zelf een node. De images zijn amd64 en arm64.
+  nodeSelector: {}
+  tolerations: []
+
+resources:
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+    cpu: 200m

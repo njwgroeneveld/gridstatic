@@ -1,0 +1,14 @@
+gridstatic is geïnstalleerd als release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Het schema wordt aangebracht door de initContainer van de dal. Controleer die eerst:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }}-dal -c schema
+
+Volg daarna de bot:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }}-grid-static -f
+
+Blijft de dal hangen op "wacht op de database...", dan is database.url niet bereikbaar vanuit
+het cluster. Controleer de directe connectiestring (poort 5432, niet de pooler op 6543) en
+sslmode=require.
+{{ range $key, $c := .Values.grid.coins }}{{ if not $c.shadow }}
+LET OP: grid {{ $key }} staat op shadow: false en handelt met echt geld.
+{{- end }}{{ end }}

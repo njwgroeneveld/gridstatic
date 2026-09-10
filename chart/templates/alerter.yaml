@@ -1,0 +1,48 @@
+{{- if .Values.telegram.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-alerter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-alerter }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }}-alerter }
+    spec:
+      nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.scheduling.tolerations | nindent 8 }}
+      containers:
+        - name: alerter
+          image: "{{ .Values.images.alerter.repository }}:{{ .Values.images.alerter.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-telegram, key: bot_token }
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-telegram, key: chat_id }
+            - name: DAL_URL
+              value: http://{{ .Release.Name }}-dal:8080
+            - name: CONNECTOR_URL
+              value: http://{{ .Release.Name }}-connector:8080
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-alerter
+spec:
+  selector: { app: {{ .Release.Name }}-alerter }
+  ports:
+    - port: 8080
+      targetPort: 8080
+{{- end }}

@@ -1,0 +1,57 @@
+name: Publish chart
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'chart/**'
+      - 'db/schema.sql'
+      - '.github/workflows/publish-chart.yml'
+  workflow_dispatch:
+
+jobs:
+  lint-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      - name: Schema in de chart is gelijk aan de bron
+        run: diff db/schema.sql chart/files/schema.sql
+
+      - name: Lint
+        run: helm lint ./chart --set database.url=postgresql://u:p@h:5432/d
+
+      - name: Render
+        run: helm template t ./chart --set database.url=postgresql://u:p@h:5432/d > /dev/null
+
+      - name: Weiger een chart zonder database.url
+        run: |
+          if helm template t ./chart > /dev/null 2>&1; then
+            echo "FOUT: de chart rendert zonder database.url"
+            exit 1
+          fi
+
+      - name: Het schema zit in de gerenderde configmap
+        run: |
+          helm template t ./chart --set database.url=postgresql://u:p@h:5432/d \
+            | grep -q "CREATE UNIQUE INDEX IF NOT EXISTS grid_orders_one_open_buy_per_level"
+
+      - name: Standaard draait alles in shadow
+        run: |
+          if helm template t ./chart --set database.url=postgresql://u:p@h:5432/d \
+               | grep -q "shadow: false"; then
+            echo "FOUT: de meegeleverde waarden zetten een grid op shadow: false"
+            exit 1
+          fi
+
+      - name: Login
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package & push
+        run: |
+          helm package ./chart -d /tmp
+          helm push /tmp/gridstatic-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts

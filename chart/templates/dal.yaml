@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-dal
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-dal }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }}-dal }
+      annotations:
+        checksum/schema: {{ include (print $.Template.BasePath "/configmap-schema.yaml") . | sha256sum }}
+    spec:
+      nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.scheduling.tolerations | nindent 8 }}
+      initContainers:
+        # Het schema wordt hier aangebracht en niet in een Helm-hook: een
+        # pre-install-hook draait voor de gewone resources, dus ook voor het secret
+        # met de connectiestring, en Helm wacht op die hook -- dat loopt vast. De dal
+        # is de enige service die de database aanraakt, dus hoort de wachtlus hier.
+        # Het script is idempotent, dus draaien bij elke herstart is geen probleem.
+        - name: schema
+          image: postgres:16-alpine
+          env:
+            - name: PGURL
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-db, key: url }
+          command: ["sh", "-c"]
+          args:
+            - |
+              until pg_isready -d "$PGURL" -t 3; do
+                echo "wacht op de database..."
+                sleep 3
+              done
+              psql "$PGURL" -v ON_ERROR_STOP=1 -f /sql/schema.sql
+          volumeMounts:
+            - name: schema
+              mountPath: /sql
+      containers:
+        - name: dal
+          image: "{{ .Values.images.dal.repository }}:{{ .Values.images.dal.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .Release.Name }}-db, key: url }
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: schema
+          configMap:
+            name: {{ .Release.Name }}-schema
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-dal
+spec:
+  selector: { app: {{ .Release.Name }}-dal }
+  ports:
+    - port: 8080
+      targetPort: 8080
