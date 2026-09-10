@@ -91,10 +91,17 @@ else
 fi
 
 if [ "$ontbreekt" = 1 ]; then
-  [ "$DRY_RUN" = 1 ] && let_op "dry-run: ga toch verder" || stop "installeer het bovenstaande en probeer opnieuw"
+  if [ "$DRY_RUN" = 1 ]; then
+    let_op "dry-run: ga toch verder"
+  else
+    stop "installeer het bovenstaande en probeer opnieuw"
+  fi
 elif ! kubectl cluster-info >/dev/null 2>&1; then
-  [ "$DRY_RUN" = 1 ] && let_op "dry-run: geen cluster bereikbaar, ga toch verder" \
-                     || stop "geen cluster bereikbaar — controleer je kubeconfig met 'kubectl cluster-info'"
+  if [ "$DRY_RUN" = 1 ]; then
+    let_op "dry-run: geen cluster bereikbaar, ga toch verder"
+  else
+    stop "geen cluster bereikbaar — controleer je kubeconfig met 'kubectl cluster-info'"
+  fi
 else
   goed "cluster bereikbaar ($(kubectl config current-context))"
 fi
