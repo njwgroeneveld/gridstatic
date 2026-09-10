@@ -155,37 +155,34 @@ configs in die database en wijst je URL naar de verkeerde plek.
 
 ## Live gaan
 
-```bash
-curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/golive.sh
-bash golive.sh
-```
+Met de hand, en dat is opzet. Het zijn twee stappen; één ervan alleen doet niets.
 
-Een apart script, met opzet. Het vraagt om je Hyperliquid-sleutel (verborgen), of het testnet of
-mainnet is, optioneel Telegram, en wélke grid live gaat. Daarna toont het wat er gaat gebeuren —
-coin, bedrag per lijn, netwerk — en moet je de naam van die grid overtypen om te bevestigen. Een
-`[j/n]` is te makkelijk weggetikt als er echt geld aan hangt.
+### 1. Een Hyperliquid-secret aanmaken
 
-Het past je `gridstatic-values.yaml` aan — één bestand, zodat je bij elke volgende
-`helm upgrade` maar één `-f` hoeft mee te geven. Voordat het bestand verandert: er komt een kopie
-(`gridstatic-values.yaml.bak`), de bewerking blijft binnen het blok van de gekozen grid, en je
-krijgt de diff te zien.
-
-Terug naar shadow: zet `shadow` weer op `true` (of herstel de `.bak`) en draai
-`helm upgrade` opnieuw.
-
-`bash golive.sh --dry-run` toont de diff en de samenvatting zonder iets aan te raken: geen
-Secret, geen wijziging aan je waardenbestand.
-
-### Of met de hand
-
-**1. Een Hyperliquid-secret aanmaken.** Gebruik een agent- of API-wallet met beperkt saldo, niet
-je hoofdaccount.
+Gebruik een agent- of API-wallet met beperkt saldo, niet je hoofdaccount.
 
 ```bash
-kubectl -n gridstatic create secret generic gridstatic-hl   --from-literal=private_key='0x...'   --from-literal=wallet_address='0x...'
+read -rsp 'Private key: ' HL_KEY; echo
+kubectl -n gridstatic apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gridstatic-hl
+type: Opaque
+stringData:
+  private_key: "$HL_KEY"
+  wallet_address: "0xJOUWWALLET"
+EOF
+unset HL_KEY
 ```
 
-**2. In je waarden:**
+Waarom zo omslachtig en niet `--from-literal=private_key='0x...'`? Omdat je sleutel dan in
+`~/.bash_history` belandt en tijdens het uitvoeren zichtbaar is in `ps`. Zo gaat de waarde via
+stdin en staat er in je historie alleen `$HL_KEY`.
+
+### 2. Je waarden aanpassen
+
+In `gridstatic-values.yaml`:
 
 ```yaml
 hyperliquid:
@@ -198,22 +195,35 @@ grid:
       shadow: false          # deze grid handelt nu echt
 ```
 
+En uitrollen:
+
+```bash
+helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic   -n gridstatic -f gridstatic-values.yaml
+```
+
 Zonder secret start de connector gewoon, maar geven zijn order-routes een 503 — genoeg voor
 shadow, te weinig om te handelen. Zonder `shadow: false` gebeurt er niets met echt geld, ook al
-staat de sleutel er. Toepassen met `helm upgrade`.
+staat de sleutel er.
 
-**Let op bij een grid die al in shadow draaide.** De bot herkent zijn config aan coin, aantal
-lijnen, grenzen en hefboom — niet aan de shadow-vlag. Zet je een bestaande shadow-grid live, dan
-gaat hij verder in dezelfde config-rij en staan simulatie en echte trades door elkaar. Wil je ze
-gescheiden houden, geef de live-grid dan andere grenzen of een ander aantal lijnen.
+Controleer daarna in de log dat er `shadow=False` staat, en kijk op Hyperliquid zelf of de orders
+er echt staan. Wat de bot denkt te hebben en wat de beurs toont, hoort gelijk te zijn.
 
-**Controleer na een wijziging aan de grids of het aantal actieve configs gelijk is gebleven.**
-Wijzig je coin, lijnen, grenzen of hefboom, dan is het voor de bot een nieuw grid: hij maakt een
-nieuwe config aan en legt een tweede laag orders bovenop de bestaande.
+### Twee dingen om te weten
+
+**Een grid die al in shadow draaide.** De bot herkent zijn config aan coin, aantal lijnen,
+grenzen en hefboom — niet aan de shadow-vlag. Zet je een bestaande shadow-grid live, dan gaat hij
+verder in dezelfde config-rij en staan simulatie en echte trades door elkaar. Wil je ze gescheiden
+houden, geef de live-grid dan andere grenzen of een ander aantal lijnen.
+
+**Wijzig je die grenzen of het aantal lijnen, dan is het voor de bot een nieuw grid.** Hij maakt
+een nieuwe config aan en legt een tweede laag orders bovenop de bestaande. Controleer na elke
+wijziging of het aantal actieve configs klopt:
 
 ```bash
 kubectl -n gridstatic exec deploy/gridstatic-dal --   curl -s "http://localhost:8080/grid-configs?strategy=STATIC&active=true" | grep -o '"id"' | wc -l
 ```
+
+Terug naar shadow is dezelfde weg: `shadow: true` en opnieuw `helm upgrade`.
 
 ---
 

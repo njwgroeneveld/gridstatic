@@ -6,8 +6,8 @@
 #   bash install.sh
 #
 # Eén vraag: je databaseverbinding. De rest heeft een standaard, en alles draait
-# in shadow -- een simulatie, zonder orders naar de beurs. Live gaan doe je daarna
-# met golive.sh, en dat is met opzet een apart script.
+# in shadow -- een simulatie, zonder orders naar de beurs. Live gaan gaat met de
+# hand; dat staat in de README en is met opzet geen script.
 
 set -euo pipefail
 
@@ -312,8 +312,8 @@ if [ "$problemen" = 0 ]; then
   Je grids aanpassen: bewerk $VALUES_FILE en draai
     helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
 
-  Met echt geld handelen: bash golive.sh
-    (aparte stap, met opzet -- vraagt om je beurssleutel en een bevestiging)
+  Met echt geld handelen: zie 'Live gaan' in de README -- dat gaat met de hand,
+  met opzet: het is geen handeling die je snel wilt doen.
 EOF
 else
   stap "${rood}Er is iets mis${uit}"
