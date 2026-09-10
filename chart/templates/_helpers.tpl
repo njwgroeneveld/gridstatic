@@ -7,7 +7,7 @@ Secrets: wat hier niet doorheen loopt, kan niet in het Helm-release-secret of in
 {{- if .Values.database.existingSecret -}}
 {{ .Values.database.existingSecret }}
 {{- else -}}
-{{- fail "database.existingSecret is leeg. Maak eerst een Secret met de sleutel 'url' aan:\n\n  kubectl -n <namespace> create secret generic gridstatic-db --from-literal=url='postgresql://postgres:WACHTWOORD@db.PROJECT.supabase.co:5432/postgres?sslmode=require'\n\nen zet database.existingSecret op gridstatic-db. Gebruik de directe verbinding op poort 5432, niet de pooler op 6543. Wijs dit nooit naar een database waarin al een andere gridstatic-stack werkt." -}}
+{{- fail "database.existingSecret is leeg. Maak eerst een Secret met de sleutel 'url' aan:\n\n  kubectl -n <namespace> create secret generic gridstatic-db --from-literal=url='postgresql://postgres.PROJECTREF:WACHTWOORD@aws-0-REGIO.pooler.supabase.com:5432/postgres?sslmode=require'\n\nen zet database.existingSecret op gridstatic-db. Pak in het Supabase-dashboard de session pooler (poort 5432, host aws-0-<regio>.pooler.supabase.com); de directe verbinding is IPv6-only. Wijs dit nooit naar een database waarin al een andere gridstatic-stack werkt." -}}
 {{- end -}}
 {{- end -}}
 

@@ -31,10 +31,24 @@ niets van buiten naar binnen.
 
 ## De database
 
-Maak een **eigen** Supabase-project aan (of gebruik een andere Postgres). Pak onder
-*Project Settings → Database* de **directe** connectiestring op poort 5432 — níet de pooler op
-6543: die draait in transaction-pooling en dat gaat slecht samen met de prepared statements van
-psycopg2.
+Maak een **eigen** Supabase-project aan (of gebruik een andere Postgres). Pak in het dashboard
+onder **Connect** de **session pooler**-string:
+
+```
+postgresql://postgres.PROJECTREF:WACHTWOORD@aws-0-REGIO.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+Waarom die en niet de andere twee:
+
+| verbinding | poort | |
+|---|---|---|
+| **Session pooler** | 5432 | wat je wilt: bereikbaar over IPv4, bedoeld voor langlopende verbindingen |
+| Transaction pooler | 6543 | werkt ook, maar is bedoeld voor korte verbindingen |
+| Direct (`db.<ref>.supabase.co`) | 5432 | **alleen over IPv6** — werkt niet op een IPv4-cluster |
+
+De directe verbinding heeft sinds 2024 geen IPv4-adres meer zonder betaalde add-on. Draait je
+cluster IPv4 (dat is de standaard bij de meeste CNI's), dan blijft de dal hangen op
+"wacht op de database..." als je die string gebruikt.
 
 > **Wijs dit nooit naar een database waarin al een gridstatic-stack werkt.** Daar staan actieve
 > `grid_configs` in. Een tweede bot herkent die als de zijne, gaat dezelfde grids beheren en legt
@@ -63,7 +77,7 @@ niet door Helm loopt, kan daar niet lekken.
 
 ```bash
 kubectl -n gridstatic create secret generic gridstatic-db \
-  --from-literal=url='postgresql://postgres:JOUW_WACHTWOORD@db.JOUWPROJECT.supabase.co:5432/postgres?sslmode=require'
+  --from-literal=url='postgresql://postgres.PROJECTREF:JOUW_WACHTWOORD@aws-0-REGIO.pooler.supabase.com:5432/postgres?sslmode=require'
 ```
 
 De sleutel moet `url` heten.
@@ -113,7 +127,8 @@ kubectl -n gridstatic logs deploy/gridstatic-dal -c schema
 ```
 
 Blijft daar "wacht op de database..." staan, dan is je connectiestring niet bereikbaar vanuit
-het cluster — controleer poort 5432 en `sslmode=require`.
+het cluster. Negen van de tien keer is dat de directe verbinding in plaats van de session
+pooler: die is IPv6-only.
 
 Dan de bot:
 

@@ -7,8 +7,9 @@ Volg daarna de bot:
   kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }}-grid-static -f
 
 Blijft de dal hangen op "wacht op de database...", dan is database.url niet bereikbaar vanuit
-het cluster. Controleer de directe connectiestring (poort 5432, niet de pooler op 6543) en
-sslmode=require.
+het cluster. Controleer je connectiestring: gebruik de session pooler (poort 5432 op
+aws-0-<regio>.pooler.supabase.com). De directe verbinding db.<ref>.supabase.co is IPv6-only en
+werkt niet op een IPv4-cluster.
 {{ range $key, $c := .Values.grid.coins }}{{ if not $c.shadow }}
 LET OP: grid {{ $key }} staat op shadow: false en handelt met echt geld.
 {{- end }}{{ end }}

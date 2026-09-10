@@ -23,8 +23,14 @@ images:
 
 database:
   # VERPLICHT. Secret met de sleutel `url`: de connectiestring naar je eigen
-  # Supabase-project of een andere Postgres. Gebruik de DIRECTE verbinding
-  # (poort 5432, niet de pooler op 6543) en zet sslmode=require.
+  # Supabase-project of een andere Postgres.
+  # Welke verbinding: pak in het Supabase-dashboard onder "Connect" de
+  # SESSION POOLER (poort 5432, host aws-0-<regio>.pooler.supabase.com,
+  # gebruiker postgres.<projectref>). De DIRECTE verbinding
+  # (db.<projectref>.supabase.co) bestaat alleen over IPv6 en werkt dus niet op
+  # een IPv4-cluster. De transaction pooler op 6543 werkt ook, maar is bedoeld
+  # voor korte verbindingen; de session pooler past bij een service die blijft
+  # draaien. Zet sslmode=require.
   #
   # LET OP: nooit een database waarin al een andere gridstatic-stack werkt. Die
   # heeft daar actieve grid_configs staan; deze bot herkent ze als de zijne en
