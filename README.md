@@ -62,13 +62,36 @@ idempotent script (`db/schema.sql`): vier tabellen en zeven indexen.
 
 ## Installeren
 
-### 1. Namespace
+### De snelle weg
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/install.sh
+bash install.sh
+```
+
+Het script controleert je gereedschap, vraagt om je connectiestring (verborgen invoer), maakt de
+namespace en het Secret aan, schrijft `gridstatic-values.yaml`, rolt de chart uit en draait
+daarna vier controles: is het schema aangebracht, draaien de pods, heeft de bot een grid
+opgebouwd, en blijft de fill-loop schoon. Aan het eind krijg je één oordeel.
+
+Wil je eerst zien wat er gebeurt: `bash install.sh --dry-run` raakt niets aan.
+
+Bewust geen `curl | bash`: dan is stdin de pijp en werkt de prompt niet — en een script dat
+Secrets aanmaakt lees je beter eerst.
+
+Instelbaar met omgevingsvariabelen (`GRIDSTATIC_NAMESPACE`, `GRIDSTATIC_DB_URL`,
+`GRIDSTATIC_RELEASE`, `GRIDSTATIC_CHART`) of met `--namespace`, `--release`, `--chart`. De
+connectiestring krijgt met opzet geen commandoregel-optie: die zou in je shell-historie belanden.
+
+### Of met de hand
+
+**1. Namespace**
 
 ```bash
 kubectl create namespace gridstatic
 ```
 
-### 2. Het database-secret
+**2. Het database-secret**
 
 **Deze chart bevat geen wachtwoorden en maakt geen Secrets aan.** Je maakt ze zelf en geeft
 alleen de naam door. Dat is met opzet: Helm bewaart de waarden waarmee je installeert in een
@@ -76,15 +99,12 @@ Secret in je cluster (`sh.helm.release.v1.<naam>.v1`), en `helm get values` toon
 niet door Helm loopt, kan daar niet lekken.
 
 ```bash
-kubectl -n gridstatic create secret generic gridstatic-db \
-  --from-literal=url='postgresql://postgres.PROJECTREF:JOUW_WACHTWOORD@aws-0-REGIO.pooler.supabase.com:5432/postgres?sslmode=require'
+kubectl -n gridstatic create secret generic gridstatic-db   --from-literal=url='postgresql://postgres.PROJECTREF:JOUW_WACHTWOORD@aws-0-REGIO.pooler.supabase.com:5432/postgres?sslmode=require'
 ```
 
 De sleutel moet `url` heten.
 
-### 3. Je waarden
-
-Maak `mijn-values.yaml` — **buiten** deze repo, bijvoorbeeld in je home-map:
+**3. Je waarden** in `gridstatic-values.yaml`:
 
 ```yaml
 database:
@@ -104,55 +124,65 @@ grid:
       leverage: 1
 ```
 
-`startBalance` is de rekenbasis voor de ordergrootte, **ook live**. Bij 20 lijnen en de
-standaard `strategyAllocationPct: 80` betekent 1000 een inleg van $40 per lijn. Zet het op het
-bedrag dat je aan deze stack wilt toevertrouwen, niet op je hele vermogen.
+`startBalance` is de rekenbasis voor de ordergrootte, **ook live**. Bij 20 lijnen en de standaard
+`strategyAllocationPct: 80` betekent 1000 een inleg van $40 per lijn. Zet het op het bedrag dat je
+aan deze stack wilt toevertrouwen, niet op je hele vermogen.
 
-De sleutel `BTC-20` is een vrij te kiezen label dat alleen in de logregels terugkomt. Het gedrag
-komt uit de velden eronder.
+De sleutel `BTC-20` is een vrij te kiezen label dat alleen in de logregels terugkomt.
 
-### 4. Installeren
+**4. Installeren**
 
 ```bash
-helm install gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
-  -n gridstatic -f mijn-values.yaml
+helm install gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic   -n gridstatic -f gridstatic-values.yaml
 ```
 
-### 5. Controleren
-
-Eerst het schema, dat door een initContainer van de dal wordt aangebracht:
+**5. Controleren**
 
 ```bash
 kubectl -n gridstatic logs deploy/gridstatic-dal -c schema
-```
-
-Blijft daar "wacht op de database..." staan, dan is je connectiestring niet bereikbaar vanuit
-het cluster. Negen van de tien keer is dat de directe verbinding in plaats van de session
-pooler: die is IPv6-only.
-
-Dan de bot:
-
-```bash
 kubectl -n gridstatic logs deploy/gridstatic-grid-static -f
 ```
 
+De initContainer hoort `CREATE TABLE`-regels te tonen. Blijft daar "wacht op de database..."
+staan, dan is je connectiestring niet bereikbaar — negen van de tien keer de directe verbinding
+in plaats van de session pooler.
+
 Bij een verse database hoor je `Initialising grid` te zien, gevolgd door
-`Grid ready — N BUY orders placed`. Zie je `Recovering state from DAL + exchange`, dan staan er
-al configs in die database en wijst je URL naar de verkeerde plek.
+`Grid ready — N BUY orders placed`. Zie je `Recovering state from DAL + exchange`, dan staan er al
+configs in die database en wijst je URL naar de verkeerde plek.
 
 ---
 
 ## Live gaan
 
-Twee losse stappen, allebei met opzet apart. Eén ervan alleen doet niets.
+```bash
+curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/golive.sh
+bash golive.sh
+```
 
-**1. Een Hyperliquid-secret aanmaken.** De wallet moet op de agent/API-wallet van je
-Hyperliquid-account staan, niet op je hoofdaccount.
+Een apart script, met opzet. Het vraagt om je Hyperliquid-sleutel (verborgen), of het testnet of
+mainnet is, optioneel Telegram, en wélke grid live gaat. Daarna toont het wat er gaat gebeuren —
+coin, bedrag per lijn, netwerk — en moet je de naam van die grid overtypen om te bevestigen. Een
+`[j/n]` is te makkelijk weggetikt als er echt geld aan hangt.
+
+Het bewerkt je `gridstatic-values.yaml` niet, maar schrijft een tweede bestand
+`gridstatic-live.yaml` met alleen de afwijkingen. Terug naar shadow is dus:
 
 ```bash
-kubectl -n gridstatic create secret generic gridstatic-hl \
-  --from-literal=private_key='0x...' \
-  --from-literal=wallet_address='0x...'
+rm gridstatic-live.yaml
+helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic   -n gridstatic -f gridstatic-values.yaml
+```
+
+`bash golive.sh --dry-run` laat zien wat er zou gebeuren zonder iets aan te raken en zonder een
+Secret aan te maken.
+
+### Of met de hand
+
+**1. Een Hyperliquid-secret aanmaken.** Gebruik een agent- of API-wallet met beperkt saldo, niet
+je hoofdaccount.
+
+```bash
+kubectl -n gridstatic create secret generic gridstatic-hl   --from-literal=private_key='0x...'   --from-literal=wallet_address='0x...'
 ```
 
 **2. In je waarden:**
@@ -170,23 +200,19 @@ grid:
 
 Zonder secret start de connector gewoon, maar geven zijn order-routes een 503 — genoeg voor
 shadow, te weinig om te handelen. Zonder `shadow: false` gebeurt er niets met echt geld, ook al
-staat de sleutel er.
+staat de sleutel er. Toepassen met `helm upgrade`.
 
-Toepassen met `helm upgrade`:
-
-```bash
-helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
-  -n gridstatic -f mijn-values.yaml
-```
+**Let op bij een grid die al in shadow draaide.** De bot herkent zijn config aan coin, aantal
+lijnen, grenzen en hefboom — niet aan de shadow-vlag. Zet je een bestaande shadow-grid live, dan
+gaat hij verder in dezelfde config-rij en staan simulatie en echte trades door elkaar. Wil je ze
+gescheiden houden, geef de live-grid dan andere grenzen of een ander aantal lijnen.
 
 **Controleer na een wijziging aan de grids of het aantal actieve configs gelijk is gebleven.**
-De bot herkent zijn eigen grid aan coin, aantal lijnen, boven- en ondergrens en hefboom. Wijzig
-je één daarvan, dan is het voor hem een nieuw grid: hij maakt een nieuwe config aan en legt een
-tweede laag orders bovenop de bestaande.
+Wijzig je coin, lijnen, grenzen of hefboom, dan is het voor de bot een nieuw grid: hij maakt een
+nieuwe config aan en legt een tweede laag orders bovenop de bestaande.
 
 ```bash
-kubectl -n gridstatic exec deploy/gridstatic-dal -- \
-  curl -s "http://localhost:8080/grid-configs?strategy=STATIC&active=true" | grep -o '"id"' | wc -l
+kubectl -n gridstatic exec deploy/gridstatic-dal --   curl -s "http://localhost:8080/grid-configs?strategy=STATIC&active=true" | grep -o '"id"' | wc -l
 ```
 
 ---

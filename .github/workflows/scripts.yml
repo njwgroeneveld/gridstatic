@@ -1,0 +1,70 @@
+name: Scripts
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '*.sh'
+      - '.github/workflows/scripts.yml'
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck install.sh golive.sh
+
+      - name: install.sh draait droog zonder iets aan te raken
+        env:
+          GRIDSTATIC_DB_URL: postgresql://postgres.test:geheim@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
+        run: bash install.sh --dry-run
+
+      - name: Geen geheim in de dry-run-uitvoer
+        env:
+          GRIDSTATIC_DB_URL: postgresql://postgres.test:zeergeheimwachtwoord@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
+        run: |
+          if bash install.sh --dry-run | grep -q zeergeheimwachtwoord; then
+            echo "FOUT: de dry-run toont het wachtwoord"
+            exit 1
+          fi
+
+      - name: golive.sh draait droog zonder iets aan te raken
+        env:
+          GRIDSTATIC_GRID: BTC-20
+          GRIDSTATIC_HL_KEY: 0xtest
+          GRIDSTATIC_HL_WALLET: 0xabc
+          GRIDSTATIC_TESTNET: "true"
+        run: |
+          cat > gridstatic-values.yaml <<'EOF'
+          database:
+            existingSecret: gridstatic-db
+
+          grid:
+            startBalance: 1000
+            coins:
+              BTC-20:
+                coin: BTC
+                active: true
+                shadow: true
+                allocationPct: 100
+                upper: 83000
+                lower: 75000
+                numLines: 20
+                leverage: 1
+          EOF
+          printf 'n\n' | bash golive.sh --dry-run
+
+      - name: Geen sleutel in de golive-uitvoer
+        env:
+          GRIDSTATIC_GRID: BTC-20
+          GRIDSTATIC_HL_KEY: 0xzeergeheimesleutel
+          GRIDSTATIC_HL_WALLET: 0xabc
+          GRIDSTATIC_TESTNET: "true"
+        run: |
+          if printf 'n\n' | bash golive.sh --dry-run | grep -q zeergeheimesleutel; then
+            echo "FOUT: de dry-run toont de private key"
+            exit 1
+          fi
