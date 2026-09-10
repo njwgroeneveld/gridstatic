@@ -1,0 +1,20 @@
+connector_url: http://connector:8080
+dal_url: http://dal:8080
+alerter_url: http://telegram-alerter:8080
+
+strategy_allocation_pct: 80
+start_balance: 464
+
+coins:
+  BTC-10:
+    coin: BTC
+    active: true
+    shadow: true
+    allocation_pct: 100
+    upper: 83000
+    lower: 75000
+    num_lines: 10
+    leverage: 1
+
+fills_poll_interval_seconds: 30
+health_check_interval_seconds: 60
