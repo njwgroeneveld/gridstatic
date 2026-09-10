@@ -1,3 +1,4 @@
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 from src.database import Database
 
@@ -78,3 +79,33 @@ def test_insert_grid_trade_returns_row(db):
     assert result["id"] == 7
 
 
+
+
+def test_execute_geeft_floats_terug_geen_decimals(db):
+    """Regressietest. Geldkolommen staan op numeric, en psycopg2 levert die als
+    Decimal. FastAPI serialiseert een Decimal op een route met een dict-annotatie
+    als JSON-string (Pydantic v2), dus de bot kreeg "83000" waar hij 83000
+    verwacht. Hij vergelijkt zijn grenzen met deze waarden om zijn eigen grid te
+    herkennen: met een string matcht dat nooit, en dan maakt hij bij elke herstart
+    een nieuwe config aan en legt hij een tweede laag orders."""
+    cur = MagicMock()
+    cur.fetchall.return_value = [{
+        "upper": Decimal("83000"),
+        "price": Decimal("79210.526315789"),
+        "coin": "BTC",
+        "level": 10,
+        "shadow": True,
+        "filled_price": None,
+    }]
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    db._conn = MagicMock(return_value=conn)
+    db._release = MagicMock()
+
+    row = db._execute("SELECT 1")[0]
+
+    assert isinstance(row["upper"], float) and row["upper"] == 83000
+    assert isinstance(row["price"], float)
+    # wat geen Decimal is, blijft onaangeroerd
+    assert row["coin"] == "BTC" and row["level"] == 10
+    assert row["shadow"] is True and row["filled_price"] is None

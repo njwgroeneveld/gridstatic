@@ -1,9 +1,24 @@
 import os
+from decimal import Decimal
 from functools import lru_cache
 
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+
+
+def _floats(row: dict) -> dict:
+    """Zet Decimal om naar float op de grens van deze service.
+
+    Geld staat in de database als numeric, want double precision rondt af. Maar
+    psycopg2 levert numeric als Decimal, en FastAPI serialiseert een Decimal op een
+    route met een dict-annotatie als JSON-string -- dat doet Pydantic v2 zo. De bot
+    krijgt dan "83000" waar hij 83000 verwacht: hij vergelijkt zijn grenzen met wat
+    hier vandaan komt om zijn eigen grid te herkennen, en een string is nooit gelijk
+    aan een getal. Gevolg zou zijn dat hij bij elke herstart een nieuwe config
+    aanmaakt en een tweede laag orders legt.
+    """
+    return {k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()}
 
 
 class Database:
@@ -23,7 +38,7 @@ class Database:
                 cur.execute(sql, params)
                 conn.commit()
                 try:
-                    return [dict(r) for r in cur.fetchall()]
+                    return [_floats(dict(r)) for r in cur.fetchall()]
                 except psycopg2.ProgrammingError:
                     return []
         except Exception:
