@@ -1,0 +1,47 @@
+name: Deploy grid-static
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'services/grid-static/**'
+      - '.github/workflows/deploy-grid-static.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r services/grid-static/requirements.txt
+      - name: Run tests
+        run: |
+          PYTHONPATH=$GITHUB_WORKSPACE/services/grid-static \
+            python -m pytest services/grid-static/tests/ -v
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: services/grid-static
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gridstatic-grid-static:latest
+            ghcr.io/${{ github.repository_owner }}/gridstatic-grid-static:${{ github.sha }}
