@@ -7,6 +7,14 @@ class DALClient:
     def __init__(self, base_url: str) -> None:
         self._url = base_url.rstrip("/")
 
+    async def health(self) -> dict:
+        """Alleen om te zien of de dal antwoordt. Bij een verse installatie brengt
+        zijn initContainer eerst het schema aan, dus hij is er later dan wij."""
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"{self._url}/health", headers=_HEADERS, timeout=5)
+            r.raise_for_status()
+            return r.json()
+
     async def insert_grid_config(self, data: dict) -> dict:
         async with httpx.AsyncClient() as c:
             r = await c.post(f"{self._url}/grid-configs", json=data, headers=_HEADERS, timeout=10)

@@ -24,6 +24,19 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
+async def _wait_for(naam: str, probe, attempts: int = 30, delay: float = 2.0) -> None:
+    """Wacht tot `probe()` zonder fout terugkomt, of geef het luid op."""
+    for attempt in range(attempts):
+        try:
+            await probe()
+            return
+        except Exception:
+            if attempt == 0:
+                log.info(f"Wachten op {naam}...")
+            await asyncio.sleep(delay)
+    raise RuntimeError(f"{naam} niet bereikbaar na {int(attempts * delay)}s")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     cfg = _load_config()
@@ -60,16 +73,13 @@ async def lifespan(_app: FastAPI):
                           fill_interval, health_interval, start_balance)
         _grids.append(grid)
 
-    for attempt in range(30):
-        try:
-            await connector.get_mids()
-            break
-        except Exception:
-            if attempt == 0:
-                log.info("Wachten op connector...")
-            await asyncio.sleep(2)
-    else:
-        raise RuntimeError("Connector niet bereikbaar na 60s")
+    # Volgorde is dwingend. De dal komt bij een verse installatie later dan wij: zijn
+    # initContainer brengt eerst het schema aan. Zonder deze lus valt de startup om op
+    # de eerste get_active_configs, stopt uvicorn en herstart de pod. Dat herstelt
+    # zichzelf, maar het ziet eruit als een kapotte installatie en kost een cyclus --
+    # en na een node-uitval starten alle pods tegelijk, dus dan is de kans het grootst.
+    await _wait_for("connector", connector.get_mids)
+    await _wait_for("dal", dal.health)
 
     for grid in _grids:
         active_configs = await grid.dal.get_active_configs(grid.coin)
