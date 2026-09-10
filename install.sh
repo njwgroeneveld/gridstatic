@@ -280,13 +280,28 @@ if [ -n "$herstarts" ]; then
   zeg "       kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static --previous"
 fi
 
-bot_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --tail=60 2>/dev/null || true)"
+# Even geduld: er is geen readiness-probe, dus de pod heet "ready" zodra de container
+# draait -- terwijl uvicorn dan nog op de connector en de dal staat te wachten. Eén
+# keer kijken is te vroeg; we wachten tot de regel er is.
+zeg "  wachten tot de bot zijn grid heeft opgebouwd..."
+bot_log=""
+for _ in $(seq 1 30); do
+  bot_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --tail=80 2>/dev/null || true)"
+  if printf '%s' "$bot_log" | grep -qE "Initialising grid|Recovering state"; then
+    break
+  fi
+  sleep 3
+done
+
 if printf '%s' "$bot_log" | grep -q "Initialising grid"; then
   goed "grid aangelegd: $(printf '%s' "$bot_log" | grep -o 'Grid ready — .*' | head -1)"
 elif printf '%s' "$bot_log" | grep -q "Recovering state"; then
   goed "bestaande grid teruggevonden"
 else
-  fout "de bot heeft geen grid opgebouwd"
+  fout "de bot heeft binnen 90 seconden geen grid opgebouwd"
+  laatste="$(printf '%s' "$bot_log" | tail -3)"
+  [ -n "$laatste" ] && printf '%s
+' "$laatste" | sed 's/^/       /'
   problemen=1
 fi
 
