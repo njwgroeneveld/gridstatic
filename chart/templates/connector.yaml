@@ -34,6 +34,15 @@ spec:
             # 503 en de info-routes blijven werken via de publieke API. Genoeg voor
             # shadow, te weinig voor een grid met shadow: false.
             {{- end }}
+          readinessProbe:
+            # Zonder deze probe heet een pod "ready" zodra de container draait, ook
+            # als de applicatie nog aan het opstarten is. Voor grid-static is dat
+            # zichtbaar fout: die wacht eerst op de connector en de dal.
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 10
