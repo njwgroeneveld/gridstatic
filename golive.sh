@@ -5,9 +5,12 @@
 #   bash golive.sh
 #
 # Dit is met opzet een apart script. install.sh laat alles in shadow draaien; dit
-# script is de bewuste stap naar de beurs. Het bewerkt je waardenbestand niet, maar
-# schrijft een tweede bestand (gridstatic-live.yaml) met alleen de live-instellingen.
-# Terug naar shadow is daarmee: dat bestand weggooien en opnieuw upgraden.
+# script is de bewuste stap naar de beurs.
+#
+# Het past je gridstatic-values.yaml aan -- één bestand, zodat je bij elke volgende
+# helm upgrade maar één -f hoeft mee te geven. Voor de zekerheid: er komt eerst een
+# kopie (.bak), de bewerking blijft binnen het blok van de gekozen grid, en je krijgt
+# de diff te zien voordat je bevestigt.
 
 set -euo pipefail
 
@@ -15,7 +18,7 @@ NAMESPACE="${GRIDSTATIC_NAMESPACE:-gridstatic}"
 RELEASE="${GRIDSTATIC_RELEASE:-gridstatic}"
 CHART="${GRIDSTATIC_CHART:-oci://ghcr.io/njwgroeneveld/charts/gridstatic}"
 VALUES_FILE="gridstatic-values.yaml"
-LIVE_FILE="gridstatic-live.yaml"
+BACKUP_FILE="gridstatic-values.yaml.bak"
 HL_SECRET="gridstatic-hl"
 TG_SECRET="gridstatic-telegram"
 DRY_RUN=0
@@ -57,9 +60,8 @@ Omgevingsvariabelen (slaan de bijbehorende vraag over)
   GRIDSTATIC_TG_CHAT     Telegram chat-id (optioneel)
   GRIDSTATIC_GRID        naam van de grid die live gaat
 
-Terug naar shadow:
-  rm gridstatic-live.yaml
-  helm upgrade <release> <chart> -n <namespace> -f gridstatic-values.yaml
+Terug naar shadow: zet shadow terug op true in gridstatic-values.yaml (of herstel
+gridstatic-values.yaml.bak) en draai helm upgrade opnieuw.
 EOF
 }
 
@@ -174,7 +176,54 @@ if [ -z "$TG_TOKEN" ] && [ -t 0 ]; then
   fi
 fi
 
-# ── 4. Bevestigen ────────────────────────────────────────────────────────────
+# ── 4. De wijziging opstellen ────────────────────────────────────────────────
+stap "Wat er verandert in $VALUES_FILE"
+
+nieuwe_waarden() {
+  # Twee bewerkingen, allebei bewust smal gehouden:
+  #  1. binnen het blok van de gekozen grid gaat shadow op false -- de lus stopt bij
+  #     het volgende grid, dus een andere grid met shadow: true blijft ongemoeid;
+  #  2. bestaande hyperliquid:- en telegram:-blokken worden verwijderd en hieronder
+  #     opnieuw geschreven, zodat opnieuw draaien hetzelfde resultaat geeft.
+  awk -v grid="$GRID" '
+    /^(hyperliquid|telegram):[[:space:]]*$/ { skip=1; next }
+    skip && /^[A-Za-z#]/ { skip=0 }
+    skip { next }
+    $0 ~ "^    " grid ":[[:space:]]*$" { ingrid=1; print; next }
+    ingrid && /^    [A-Za-z0-9_.-]+:[[:space:]]*$/ { ingrid=0 }
+    ingrid && /^      shadow:/ { sub(/shadow:.*/, "shadow: false"); print; next }
+    { print }
+  ' "$VALUES_FILE"
+
+  printf '
+hyperliquid:
+  testnet: %s
+  existingSecret: %s
+' "$TESTNET" "$HL_SECRET"
+  if [ -n "$TG_TOKEN" ]; then
+    printf '
+telegram:
+  enabled: true
+  existingSecret: %s
+' "$TG_SECRET"
+  fi
+}
+
+nieuw_bestand="$(mktemp)"
+trap 'rm -f "$nieuw_bestand"' EXIT
+nieuwe_waarden > "$nieuw_bestand"
+
+if command -v diff >/dev/null 2>&1; then
+  diff -u "$VALUES_FILE" "$nieuw_bestand" | sed 's/^/  /' || true
+else
+  zeg "  (diff niet beschikbaar; nieuwe inhoud:)"
+  sed 's/^/  /' "$nieuw_bestand"
+fi
+
+if ! grep -q "shadow: false" "$nieuw_bestand"; then
+  stop "de bewerking heeft geen shadow: false opgeleverd — controleer $VALUES_FILE met de hand"
+fi
+
 stap "Wat er gaat gebeuren"
 
 netwerk="Hyperliquid testnet"
@@ -198,72 +247,38 @@ if [ "$was_shadow" = "true" ]; then
   zeg ""
 fi
 
-if [ "$DRY_RUN" = 0 ]; then
-  printf '  Typ de naam van de grid om te bevestigen (%s): ' "$GRID"
-  read -r bevestiging
-  [ "$bevestiging" = "$GRID" ] || stop "niet bevestigd — er is niets veranderd"
+if [ "$DRY_RUN" = 1 ]; then
+  stap "Dry-run klaar"
+  zeg "  Er is niets aangeraakt, geen secret aangemaakt en $VALUES_FILE is ongewijzigd."
+  exit 0
 fi
+
+printf '  Typ de naam van de grid om te bevestigen (%s): ' "$GRID"
+read -r bevestiging
+[ "$bevestiging" = "$GRID" ] || stop "niet bevestigd — er is niets veranderd"
 
 # ── 5. Secrets ───────────────────────────────────────────────────────────────
 stap "Secrets"
 
-if [ "$DRY_RUN" = 1 ]; then
-  printf '       zou draaien: kubectl -n %s create secret generic %s --from-literal=private_key=<verborgen> --from-literal=wallet_address=<verborgen> | kubectl apply -f -\n' "$NAMESPACE" "$HL_SECRET"
-else
-  kubectl -n "$NAMESPACE" create secret generic "$HL_SECRET" \
-    --from-literal=private_key="$HL_KEY" \
-    --from-literal=wallet_address="$HL_WALLET" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  goed "$HL_SECRET aangemaakt of bijgewerkt"
-fi
+kubectl -n "$NAMESPACE" create secret generic "$HL_SECRET"   --from-literal=private_key="$HL_KEY"   --from-literal=wallet_address="$HL_WALLET"   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+goed "$HL_SECRET aangemaakt of bijgewerkt"
 
 if [ -n "$TG_TOKEN" ]; then
-  if [ "$DRY_RUN" = 1 ]; then
-    printf '       zou draaien: kubectl -n %s create secret generic %s --from-literal=bot_token=<verborgen> --from-literal=chat_id=<verborgen> | kubectl apply -f -\n' "$NAMESPACE" "$TG_SECRET"
-  else
-    kubectl -n "$NAMESPACE" create secret generic "$TG_SECRET" \
-      --from-literal=bot_token="$TG_TOKEN" \
-      --from-literal=chat_id="$TG_CHAT" \
-      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-    goed "$TG_SECRET aangemaakt of bijgewerkt"
-  fi
+  kubectl -n "$NAMESPACE" create secret generic "$TG_SECRET"     --from-literal=bot_token="$TG_TOKEN"     --from-literal=chat_id="$TG_CHAT"     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  goed "$TG_SECRET aangemaakt of bijgewerkt"
 fi
 
-# ── 6. Live-waarden ──────────────────────────────────────────────────────────
-stap "Waardenbestand $LIVE_FILE"
+# ── 6. Waardenbestand ────────────────────────────────────────────────────────
+stap "Waardenbestand bijwerken"
 
-live_inhoud="$(cat <<EOF
-# Aangemaakt door golive.sh. Alleen wat afwijkt van $VALUES_FILE staat hier.
-# Weggooien en opnieuw upgraden zet alles terug in shadow.
-hyperliquid:
-  testnet: $TESTNET
-  existingSecret: $HL_SECRET
-$([ -n "$TG_TOKEN" ] && printf 'telegram:\n  enabled: true\n  existingSecret: %s\n' "$TG_SECRET")
-grid:
-  coins:
-    $GRID:
-      shadow: false
-EOF
-)"
-
-if [ "$DRY_RUN" = 1 ]; then
-  printf '       zou schrijven: %s\n\n' "$LIVE_FILE"
-  printf '%s\n' "$live_inhoud" | sed 's/^/       /'
-else
-  printf '%s\n' "$live_inhoud" > "$LIVE_FILE"
-  goed "geschreven"
-fi
+cp "$VALUES_FILE" "$BACKUP_FILE"
+cp "$nieuw_bestand" "$VALUES_FILE"
+goed "$VALUES_FILE bijgewerkt (kopie in $BACKUP_FILE)"
 
 # ── 7. Uitrollen ─────────────────────────────────────────────────────────────
 stap "Uitrollen"
 
-draai helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE" -f "$LIVE_FILE"
-
-if [ "$DRY_RUN" = 1 ]; then
-  stap "Dry-run klaar"
-  zeg "  Er is niets aangeraakt en er is geen secret aangemaakt."
-  exit 0
-fi
+helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
 
 zeg "  wachten tot de nieuwe pod draait..."
 kubectl -n "$NAMESPACE" rollout status deployment/"$RELEASE"-grid-static --timeout=120s >/dev/null 2>&1 || \
@@ -283,8 +298,8 @@ cat <<EOF
   Meekijken:
     kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static -f
 
-  Terug naar shadow:
-    rm $LIVE_FILE
+  Terug naar shadow: zet shadow terug op true in $VALUES_FILE (of herstel
+  $BACKUP_FILE) en draai:
     helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
 
   Controleer de eerste orders ook op Hyperliquid zelf. Wat de bot denkt te hebben

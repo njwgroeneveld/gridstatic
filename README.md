@@ -165,16 +165,16 @@ mainnet is, optioneel Telegram, en wélke grid live gaat. Daarna toont het wat e
 coin, bedrag per lijn, netwerk — en moet je de naam van die grid overtypen om te bevestigen. Een
 `[j/n]` is te makkelijk weggetikt als er echt geld aan hangt.
 
-Het bewerkt je `gridstatic-values.yaml` niet, maar schrijft een tweede bestand
-`gridstatic-live.yaml` met alleen de afwijkingen. Terug naar shadow is dus:
+Het past je `gridstatic-values.yaml` aan — één bestand, zodat je bij elke volgende
+`helm upgrade` maar één `-f` hoeft mee te geven. Voordat het bestand verandert: er komt een kopie
+(`gridstatic-values.yaml.bak`), de bewerking blijft binnen het blok van de gekozen grid, en je
+krijgt de diff te zien.
 
-```bash
-rm gridstatic-live.yaml
-helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic   -n gridstatic -f gridstatic-values.yaml
-```
+Terug naar shadow: zet `shadow` weer op `true` (of herstel de `.bak`) en draai
+`helm upgrade` opnieuw.
 
-`bash golive.sh --dry-run` laat zien wat er zou gebeuren zonder iets aan te raken en zonder een
-Secret aan te maken.
+`bash golive.sh --dry-run` toont de diff en de samenvatting zonder iets aan te raken: geen
+Secret, geen wijziging aan je waardenbestand.
 
 ### Of met de hand
 
