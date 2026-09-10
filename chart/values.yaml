@@ -13,30 +13,37 @@ images:
     tag: latest
   pullPolicy: Always
 
+# ── Geheimen ─────────────────────────────────────────────────────────────────
+# Deze chart bevat geen enkel wachtwoord en maakt geen Secrets aan. Je maakt ze
+# zelf en zet hier alleen de naam. Reden: Helm bewaart de waarden waarmee je
+# installeert in een Secret in je cluster (sh.helm.release.v1.<naam>.v1), en
+# `helm get values` toont ze terug. Wat hier niet in staat, kan daar niet lekken.
+#
+# Zie de README voor de kubectl-commando's die deze Secrets aanmaken.
+
 database:
-  # Verplicht. Je eigen Supabase-project, of een andere Postgres.
-  # Gebruik de DIRECTE connectiestring (poort 5432), niet de pooler op 6543:
-  # psycopg2 gebruikt prepared statements en die gaan slecht samen met
-  # transaction pooling. Zet sslmode=require.
+  # VERPLICHT. Secret met de sleutel `url`: de connectiestring naar je eigen
+  # Supabase-project of een andere Postgres. Gebruik de DIRECTE verbinding
+  # (poort 5432, niet de pooler op 6543) en zet sslmode=require.
   #
-  # LET OP: wijs dit nooit naar een database waarin al een andere gridstatic-stack
-  # werkt. Die stack heeft daar actieve grid_configs staan; deze bot herkent ze als
-  # de zijne en gaat dezelfde grids beheren. Twee bots op één grid betekent dubbele
-  # orders. Een eigen Supabase-project kost je twee minuten.
-  url: ""
+  # LET OP: nooit een database waarin al een andere gridstatic-stack werkt. Die
+  # heeft daar actieve grid_configs staan; deze bot herkent ze als de zijne en
+  # gaat dezelfde grids beheren. Twee bots op één grid betekent dubbele orders.
+  existingSecret: ""
 
 hyperliquid:
   testnet: true
-  # Leeg laten mag. Zonder sleutel bouwt de connector geen exchange-client en geven
-  # zijn order-routes een 503 -- genoeg voor shadow, want daar wordt niets besteld.
-  walletAddress: ""
-  privateKey: ""
+  # Optioneel. Secret met de sleutels `private_key` en `wallet_address`.
+  # Leeg laten mag: zonder sleutel bouwt de connector geen exchange-client en
+  # geven zijn order-routes een 503. Genoeg voor shadow, want daar wordt niets
+  # besteld. Voor een grid met shadow: false is dit verplicht.
+  existingSecret: ""
 
 telegram:
   # Uit: dan komt de alerter-pod er niet en mislukken de alert-aanroepen stil.
   enabled: false
-  botToken: ""
-  chatId: ""
+  # Verplicht zodra enabled true is. Secret met `bot_token` en `chat_id`.
+  existingSecret: ""
 
 grid:
   strategyAllocationPct: 80
@@ -53,7 +60,8 @@ grid:
       coin: BTC
       active: true
       # shadow: false betekent handelen met echt geld. Samen met een ingevulde
-      # privateKey zijn dit de twee stappen naar live -- allebei met opzet apart.
+      # hyperliquid.existingSecret zijn dit de twee stappen naar live -- allebei
+      # met opzet apart.
       shadow: true
       allocationPct: 100
       upper: 83000

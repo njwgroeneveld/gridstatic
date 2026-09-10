@@ -23,28 +23,35 @@ jobs:
         run: diff db/schema.sql chart/files/schema.sql
 
       - name: Lint
-        run: helm lint ./chart --set database.url=postgresql://u:p@h:5432/d
+        run: helm lint ./chart --set database.existingSecret=test-db-secret
 
       - name: Render
-        run: helm template t ./chart --set database.url=postgresql://u:p@h:5432/d > /dev/null
+        run: helm template t ./chart --set database.existingSecret=test-db-secret > /dev/null
 
-      - name: Weiger een chart zonder database.url
+      - name: Weiger een chart zonder database.existingSecret
         run: |
           if helm template t ./chart > /dev/null 2>&1; then
-            echo "FOUT: de chart rendert zonder database.url"
+            echo "FOUT: de chart rendert zonder database.existingSecret"
             exit 1
           fi
 
       - name: Het schema zit in de gerenderde configmap
         run: |
-          helm template t ./chart --set database.url=postgresql://u:p@h:5432/d \
+          helm template t ./chart --set database.existingSecret=test-db-secret \
             | grep -q "CREATE UNIQUE INDEX IF NOT EXISTS grid_orders_one_open_buy_per_level"
 
       - name: Standaard draait alles in shadow
         run: |
-          if helm template t ./chart --set database.url=postgresql://u:p@h:5432/d \
+          if helm template t ./chart --set database.existingSecret=test-db-secret \
                | grep -q "shadow: false"; then
             echo "FOUT: de meegeleverde waarden zetten een grid op shadow: false"
+            exit 1
+          fi
+
+      - name: De chart maakt zelf geen Secrets aan
+        run: |
+          if helm template t ./chart --set database.existingSecret=test-db-secret | grep -q "^kind: Secret"; then
+            echo "FOUT: de chart rendert een Secret; geheimen horen niet door Helm te lopen"
             exit 1
           fi
 

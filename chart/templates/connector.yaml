@@ -21,15 +21,19 @@ spec:
           env:
             - name: HYPERLIQUID_TESTNET
               value: {{ .Values.hyperliquid.testnet | quote }}
-            # Een lege sleutel is geen probleem: de exchange-client wordt pas bij de
-            # eerste order-aanroep gebouwd. Tot die tijd geven de order-routes een 503
-            # en blijven de info-routes werken via de publieke API.
+            {{- if .Values.hyperliquid.existingSecret }}
             - name: HL_PRIVATE_KEY
               valueFrom:
-                secretKeyRef: { name: {{ .Release.Name }}-hyperliquid, key: private_key }
+                secretKeyRef: { name: {{ .Values.hyperliquid.existingSecret }}, key: private_key }
             - name: WALLET_ADDRESS
               valueFrom:
-                secretKeyRef: { name: {{ .Release.Name }}-hyperliquid, key: wallet_address }
+                secretKeyRef: { name: {{ .Values.hyperliquid.existingSecret }}, key: wallet_address }
+            {{- else }}
+            # Geen sleutel opgegeven. De connector bouwt zijn exchange-client pas bij
+            # de eerste order-aanroep, dus hij start gewoon; de order-routes geven een
+            # 503 en de info-routes blijven werken via de publieke API. Genoeg voor
+            # shadow, te weinig voor een grid met shadow: false.
+            {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 10

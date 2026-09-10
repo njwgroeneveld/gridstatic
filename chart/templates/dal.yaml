@@ -25,7 +25,7 @@ spec:
           env:
             - name: PGURL
               valueFrom:
-                secretKeyRef: { name: {{ .Release.Name }}-db, key: url }
+                secretKeyRef: { name: {{ include "gridstatic.databaseSecret" . }}, key: url }
           command: ["sh", "-c"]
           args:
             - |
@@ -46,7 +46,7 @@ spec:
           env:
             - name: DATABASE_URL
               valueFrom:
-                secretKeyRef: { name: {{ .Release.Name }}-db, key: url }
+                secretKeyRef: { name: {{ include "gridstatic.databaseSecret" . }}, key: url }
           livenessProbe:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 15
