@@ -29,15 +29,15 @@ spec:
               valueFrom:
                 secretKeyRef: { name: {{ .Values.hyperliquid.existingSecret }}, key: wallet_address }
             {{- else }}
-            # Geen sleutel opgegeven. De connector bouwt zijn exchange-client pas bij
-            # de eerste order-aanroep, dus hij start gewoon; de order-routes geven een
-            # 503 en de info-routes blijven werken via de publieke API. Genoeg voor
-            # shadow, te weinig voor een grid met shadow: false.
+            # No key configured. The connector only builds its exchange client on the
+            # first order call, so it starts normally: order routes answer 503 while
+            # the info routes keep working through the public API. Enough for shadow,
+            # not enough for a grid with shadow: false.
             {{- end }}
           readinessProbe:
-            # Zonder deze probe heet een pod "ready" zodra de container draait, ook
-            # als de applicatie nog aan het opstarten is. Voor grid-static is dat
-            # zichtbaar fout: die wacht eerst op de connector en de dal.
+            # Without this probe a pod counts as ready as soon as its container runs,
+            # even while the application is still starting. For grid-static that is
+            # plainly wrong: it first waits for the connector and the dal.
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 5

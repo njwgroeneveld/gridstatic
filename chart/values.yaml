@@ -13,61 +13,61 @@ images:
     tag: latest
   pullPolicy: Always
 
-# ── Geheimen ─────────────────────────────────────────────────────────────────
-# Deze chart bevat geen enkel wachtwoord en maakt geen Secrets aan. Je maakt ze
-# zelf en zet hier alleen de naam. Reden: Helm bewaart de waarden waarmee je
-# installeert in een Secret in je cluster (sh.helm.release.v1.<naam>.v1), en
-# `helm get values` toont ze terug. Wat hier niet in staat, kan daar niet lekken.
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# This chart contains no passwords and creates no Secrets. You create them
+# yourself and put only their names here. The reason: Helm stores the values you
+# install with in a Secret in your cluster (sh.helm.release.v1.<name>.v1), and
+# `helm get values` prints them back. What is not in here cannot leak from there.
 #
-# Zie de README voor de kubectl-commando's die deze Secrets aanmaken.
+# See the README for the commands that create these Secrets.
 
 database:
-  # VERPLICHT. Secret met de sleutel `url`: de connectiestring naar je eigen
-  # Supabase-project of een andere Postgres.
-  # Welke verbinding: pak in het Supabase-dashboard onder "Connect" de
-  # SESSION POOLER (poort 5432, host aws-0-<regio>.pooler.supabase.com,
-  # gebruiker postgres.<projectref>). De DIRECTE verbinding
-  # (db.<projectref>.supabase.co) bestaat alleen over IPv6 en werkt dus niet op
-  # een IPv4-cluster. De transaction pooler op 6543 werkt ook, maar is bedoeld
-  # voor korte verbindingen; de session pooler past bij een service die blijft
-  # draaien. Zet sslmode=require.
+  # REQUIRED. Name of a Secret with the key `url`: the connection string to your
+  # own Supabase project or any other PostgreSQL.
   #
-  # LET OP: nooit een database waarin al een andere gridstatic-stack werkt. Die
-  # heeft daar actieve grid_configs staan; deze bot herkent ze als de zijne en
-  # gaat dezelfde grids beheren. Twee bots op één grid betekent dubbele orders.
+  # Which connection: in the Supabase dashboard under "Connect", take the SESSION
+  # POOLER (port 5432, host aws-0-<region>.pooler.supabase.com, user
+  # postgres.<project-ref>). The DIRECT connection (db.<project-ref>.supabase.co)
+  # is IPv6-only and does not work from an IPv4 cluster. The transaction pooler
+  # on port 6543 works too, but is meant for short-lived connections; the session
+  # pooler suits a long-running service. Add sslmode=require.
+  #
+  # WARNING: never point this at a database another gridstatic stack is already
+  # using. Its active grid_configs are there; this bot will recognise them as its
+  # own and manage the same grids. Two bots on one grid means duplicate orders.
   existingSecret: ""
 
 hyperliquid:
   testnet: true
-  # Optioneel. Secret met de sleutels `private_key` en `wallet_address`.
-  # Leeg laten mag: zonder sleutel bouwt de connector geen exchange-client en
-  # geven zijn order-routes een 503. Genoeg voor shadow, want daar wordt niets
-  # besteld. Voor een grid met shadow: false is dit verplicht.
+  # Optional. Name of a Secret with the keys `private_key` and `wallet_address`.
+  # Leaving it empty is fine: without a key the connector never builds an exchange
+  # client and its order routes answer 503. That is enough for shadow, which never
+  # places an order. A grid with shadow: false needs it.
   existingSecret: ""
 
 telegram:
-  # Uit: dan komt de alerter-pod er niet en mislukken de alert-aanroepen stil.
+  # Off: no alerter pod is deployed, and alert calls fail silently.
   enabled: false
-  # Verplicht zodra enabled true is. Secret met `bot_token` en `chat_id`.
+  # Required once enabled is true. Name of a Secret with `bot_token` and `chat_id`.
   existingSecret: ""
 
 grid:
   strategyAllocationPct: 80
-  # Rekenbasis voor de ordergrootte, ook live -- niet alleen in shadow.
-  # Zet dit op het bedrag dat je aan deze stack wilt toevertrouwen. Bij 20 lijnen
-  # en 80% allocatie is 1000 gelijk aan $40 per lijn.
+  # Basis for order sizing -- live as well, not only in shadow. Set it to the
+  # amount you are willing to trust this stack with. With 20 lines and 80%
+  # allocation, 1000 means $40 per line.
   startBalance: 1000
   fillsPollIntervalSeconds: 30
   healthCheckIntervalSeconds: 60
-  # De sleutel is een vrij te kiezen label; hij komt alleen in de logregels terug.
-  # Het gedrag komt uit de velden eronder.
+  # The key is a free-form label that only shows up in log lines. Behaviour comes
+  # from the fields below it.
   coins:
     BTC-20:
       coin: BTC
       active: true
-      # shadow: false betekent handelen met echt geld. Samen met een ingevulde
-      # hyperliquid.existingSecret zijn dit de twee stappen naar live -- allebei
-      # met opzet apart.
+      # shadow: false means trading with real money. Together with a filled-in
+      # hyperliquid.existingSecret these are the two steps to going live, kept
+      # deliberately separate.
       shadow: true
       allocationPct: 100
       upper: 83000
@@ -76,7 +76,7 @@ grid:
       leverage: 1
 
 scheduling:
-  # Leeg: de scheduler kiest zelf een node. De images zijn amd64 en arm64.
+  # Empty: the scheduler picks a node. The images are built for amd64 and arm64.
   nodeSelector: {}
   tolerations: []
 

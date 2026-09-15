@@ -15,11 +15,11 @@ spec:
       nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
       tolerations: {{ toYaml .Values.scheduling.tolerations | nindent 8 }}
       initContainers:
-        # Het schema wordt hier aangebracht en niet in een Helm-hook: een
-        # pre-install-hook draait voor de gewone resources, dus ook voor het secret
-        # met de connectiestring, en Helm wacht op die hook -- dat loopt vast. De dal
-        # is de enige service die de database aanraakt, dus hoort de wachtlus hier.
-        # Het script is idempotent, dus draaien bij elke herstart is geen probleem.
+        # The schema is applied here and not in a Helm hook: a pre-install hook runs
+        # before the regular resources -- including the Secret with the connection
+        # string -- and Helm waits for it, so it deadlocks. The dal is the only service
+        # that touches the database, so the wait belongs here. The script is
+        # idempotent, so running it on every restart is harmless.
         - name: schema
           image: postgres:16-alpine
           env:
@@ -30,7 +30,7 @@ spec:
           args:
             - |
               until pg_isready -d "$PGURL" -t 3; do
-                echo "wacht op de database..."
+                echo "waiting for the database..."
                 sleep 3
               done
               psql "$PGURL" -v ON_ERROR_STOP=1 -f /sql/schema.sql
@@ -48,9 +48,9 @@ spec:
               valueFrom:
                 secretKeyRef: { name: {{ include "gridstatic.databaseSecret" . }}, key: url }
           readinessProbe:
-            # Zonder deze probe heet een pod "ready" zodra de container draait, ook
-            # als de applicatie nog aan het opstarten is. Voor grid-static is dat
-            # zichtbaar fout: die wacht eerst op de connector en de dal.
+            # Without this probe a pod counts as ready as soon as its container runs,
+            # even while the application is still starting. For grid-static that is
+            # plainly wrong: it first waits for the connector and the dal.
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 5

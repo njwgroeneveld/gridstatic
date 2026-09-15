@@ -31,9 +31,9 @@ spec:
             - name: CONNECTOR_URL
               value: http://{{ .Release.Name }}-connector:8080
           readinessProbe:
-            # Zonder deze probe heet een pod "ready" zodra de container draait, ook
-            # als de applicatie nog aan het opstarten is. Voor grid-static is dat
-            # zichtbaar fout: die wacht eerst op de connector en de dal.
+            # Without this probe a pod counts as ready as soon as its container runs,
+            # even while the application is still starting. For grid-static that is
+            # plainly wrong: it first waits for the connector and the dal.
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 5

@@ -4,8 +4,8 @@ metadata:
   name: {{ .Release.Name }}-grid-static
 spec:
   replicas: 1
-  # Recreate, niet RollingUpdate: twee pods die dezelfde grid beheren zouden
-  # dubbele orders leggen.
+  # Recreate, not RollingUpdate: two pods managing the same grid would place
+  # duplicate orders.
   strategy: { type: Recreate }
   selector:
     matchLabels: { app: {{ .Release.Name }}-grid-static }
@@ -13,8 +13,8 @@ spec:
     metadata:
       labels: { app: {{ .Release.Name }}-grid-static }
       annotations:
-        # Zonder deze checksum verandert de deployment niet als je alleen de grids
-        # aanpast, en blijft de oude settings.yaml in de draaiende pod staan.
+        # Without this checksum the deployment does not change when you only edit the
+        # grids, and the running pod keeps the old settings.yaml.
         checksum/settings: {{ include (print $.Template.BasePath "/configmap-settings.yaml") . | sha256sum }}
     spec:
       nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
@@ -26,9 +26,9 @@ spec:
           ports:
             - containerPort: 8080
           readinessProbe:
-            # Zonder deze probe heet een pod "ready" zodra de container draait, ook
-            # als de applicatie nog aan het opstarten is. Voor grid-static is dat
-            # zichtbaar fout: die wacht eerst op de connector en de dal.
+            # Without this probe a pod counts as ready as soon as its container runs,
+            # even while the application is still starting. For grid-static that is
+            # plainly wrong: it first waits for the connector and the dal.
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 5

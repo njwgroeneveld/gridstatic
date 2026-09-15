@@ -1,30 +1,20 @@
--- gridstatic databaseschema
+-- gridstatic database schema
 --
--- Gelezen uit de draaiende Supabase op 2026-09-10 via de systeemcatalogus
--- (pg_attribute, pg_constraint, pg_indexes) -- dezelfde bron die pg_dump gebruikt.
--- De tabel grid_dynamic_trades hoort bij de dynamic-grid en zit hier bewust niet in.
+-- Idempotent: safe to run as often as you like. The dal's initContainer runs it on
+-- every start.
 --
--- Idempotent: dit script mag zo vaak draaien als je wilt. De initContainer van de
--- dal voert het uit bij elke start.
---
--- Eén bewuste afwijking van de database van de gridtrading-stack: prijzen, bedragen
--- en winst staan hier op `numeric` in plaats van `double precision`. Geld hoort exact
--- opgeslagen te worden; `double precision` rondt af en dat zie je terug in sommen.
--- De services merken er niets van: psycopg2 leest `numeric` als Decimal, maar FastAPI
--- zet die om naar een gewone float voordat het antwoord de DAL verlaat. `fee_usd` en
--- `grid_funding.usdc` staan in de draaiende database al op `numeric` en gaan al
--- maanden zo goed. `leverage` blijft double precision: dat is een factor, geen geld.
+-- Prices, amounts and profit are `numeric`, not `double precision`: money should be
+-- stored exactly, and floating point rounding shows up in sums. psycopg2 returns
+-- `numeric` as Python Decimal, which FastAPI would serialise as a JSON *string* on
+-- routes annotated with dict -- so the dal converts every Decimal to float before a
+-- row leaves the service (see Database._execute). `leverage` stays double precision:
+-- it is a multiplier, not money.
 
 CREATE SCHEMA IF NOT EXISTS gridtrading;
 
 -- ── grid_configs ─────────────────────────────────────────────────────────────
--- Eén rij per grid: zijn grenzen, aantal lijnen en hefboom. De bot herkent zijn
--- eigen grid bij het opstarten aan coin + num_lines + upper + lower + leverage.
---
--- Weggelaten ten opzichte van de database van de gridtrading-stack: coin_key,
--- run_seq, started_at, ended_at en end_reason met hun index. Die horen bij het
--- run-versioning-ontwerp van 2026-09-03 en worden door geen enkele service in deze
--- stack geschreven of gelezen.
+-- One row per grid: its bounds, number of lines and leverage. On startup the bot
+-- recognises its own grid by coin + num_lines + upper + lower + leverage.
 
 CREATE TABLE IF NOT EXISTS gridtrading.grid_configs (
     id          serial PRIMARY KEY,
@@ -40,9 +30,9 @@ CREATE TABLE IF NOT EXISTS gridtrading.grid_configs (
 );
 
 -- ── grid_orders ──────────────────────────────────────────────────────────────
--- Eén rij per order. `level` is het lijnnummer en is de sleutel waarop de bot een
--- bezette gridlijn herkent -- niet de prijs, die onderweg door tick-afronding en
--- deelvullingen verandert.
+-- One row per order. `level` is the grid line number, and it is the key the bot
+-- uses to recognise an occupied line -- not the price, which is changed along the
+-- way by tick rounding and partial fills.
 
 CREATE TABLE IF NOT EXISTS gridtrading.grid_orders (
     id                serial PRIMARY KEY,
@@ -62,15 +52,15 @@ CREATE TABLE IF NOT EXISTS gridtrading.grid_orders (
     fee_usd           numeric
 );
 
--- Twee rustende buy-orders op dezelfde lijn horen niet te bestaan. Alleen BUY:
--- twee verschillende buys mogen legitiem allebei één lijn hoger verkopen.
+-- Two resting buy orders on the same line must never exist. BUY only: two
+-- different buys may legitimately both sell one line higher.
 CREATE UNIQUE INDEX IF NOT EXISTS grid_orders_one_open_buy_per_level
     ON gridtrading.grid_orders USING btree (grid_config_id, level)
     WHERE ((status = 'OPEN'::text) AND (side = 'BUY'::text));
 
 -- ── grid_trades ──────────────────────────────────────────────────────────────
--- Eén rij per koop-verkoop-rondgang. buy_order_id wijst naar de order en levert
--- via een join het lijnnummer van de trade.
+-- One row per buy-sell round trip. buy_order_id points at the order, and a join on
+-- it yields the trade's grid line.
 
 CREATE TABLE IF NOT EXISTS gridtrading.grid_trades (
     id             serial PRIMARY KEY,
@@ -94,8 +84,8 @@ CREATE INDEX IF NOT EXISTS grid_trades_grid_config_id_idx
     ON gridtrading.grid_trades USING btree (grid_config_id);
 
 -- ── grid_funding ─────────────────────────────────────────────────────────────
--- Fundingbetalingen, apart van de handelswinst. De unieke sleutel voorkomt dat
--- dezelfde betaling twee keer wordt geboekt bij een herstart.
+-- Funding payments, kept apart from trading profit. The unique key stops the same
+-- payment from being booked twice after a restart.
 
 CREATE TABLE IF NOT EXISTS gridtrading.grid_funding (
     id             bigserial PRIMARY KEY,
