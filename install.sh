@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# gridstatic — installeer de stack in shadow.
+# gridstatic -- install the stack in shadow mode.
 #
 #   curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/install.sh
 #   bash install.sh
 #
-# Eén vraag: je databaseverbinding. De rest heeft een standaard, en alles draait
-# in shadow -- een simulatie, zonder orders naar de beurs. Live gaan gaat met de
-# hand; dat staat in de README en is met opzet geen script.
+# One question: your database connection. Everything else has a default, and every
+# grid runs in shadow -- a simulation that never sends an order to the exchange.
+# Going live is a manual step described in the README, deliberately not a script.
 
 set -euo pipefail
 
@@ -18,46 +18,46 @@ VALUES_FILE="gridstatic-values.yaml"
 DB_SECRET="gridstatic-db"
 DRY_RUN=0
 
-rood=$'\033[31m'; groen=$'\033[32m'; geel=$'\033[33m'; vet=$'\033[1m'; uit=$'\033[0m'
-zeg()   { printf '%s\n' "$*"; }
-stap()  { printf '\n%s==>%s %s\n' "$vet" "$uit" "$*"; }
-goed()  { printf '%s  ok%s  %s\n' "$groen" "$uit" "$*"; }
-let_op(){ printf '%s  let op%s  %s\n' "$geel" "$uit" "$*"; }
-fout()  { printf '%s  fout%s  %s\n' "$rood" "$uit" "$*" >&2; }
-stop()  { fout "$*"; exit 1; }
+red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; bold=$'\033[1m'; reset=$'\033[0m'
+say()  { printf '%s\n' "$*"; }
+step() { printf '\n%s==>%s %s\n' "$bold" "$reset" "$*"; }
+ok()   { printf '%s  ok%s  %s\n' "$green" "$reset" "$*"; }
+warn() { printf '%s  warning%s  %s\n' "$yellow" "$reset" "$*"; }
+err()  { printf '%s  error%s  %s\n' "$red" "$reset" "$*" >&2; }
+die()  { err "$*"; exit 1; }
 
-# In dry-run tonen we wat we zouden draaien. Geheimen gaan nooit door deze functie:
-# die worden via stdin doorgegeven, zie maak_secret.
-draai() {
+# In dry-run mode, show what would run instead of running it. Secrets never pass
+# through this function: they go over stdin, see create_secret.
+run() {
   if [ "$DRY_RUN" = 1 ]; then
-    printf '       zou draaien: %s\n' "$*"
+    printf '       would run: %s\n' "$*"
   else
     "$@"
   fi
 }
 
-gebruik() {
+usage() {
   cat <<'EOF'
-gridstatic installeren (shadow)
+Install gridstatic (shadow mode)
 
-  bash install.sh [opties]
+  bash install.sh [options]
 
-Opties
-  --namespace NAAM   standaard: gridstatic
-  --release NAAM     standaard: gridstatic
-  --chart REF        standaard: oci://ghcr.io/njwgroeneveld/charts/gridstatic
-                     (wijs naar ./chart om een lokale versie te testen)
-  --dry-run          toon wat er zou gebeuren, raak niets aan
-  --help             deze tekst
+Options
+  --namespace NAME   default: gridstatic
+  --release NAME     default: gridstatic
+  --chart REF        default: oci://ghcr.io/njwgroeneveld/charts/gridstatic
+                     (point it at ./chart to test a local version)
+  --dry-run          show what would happen without touching anything
+  --help             this text
 
-Omgevingsvariabelen (slaan de bijbehorende vraag over)
-  GRIDSTATIC_DB_URL      connectiestring naar je Postgres/Supabase
-  GRIDSTATIC_NAMESPACE   idem als --namespace
-  GRIDSTATIC_RELEASE     idem als --release
-  GRIDSTATIC_CHART       idem als --chart
+Environment variables (each one skips the matching question)
+  GRIDSTATIC_DB_URL      connection string for your PostgreSQL / Supabase
+  GRIDSTATIC_NAMESPACE   same as --namespace
+  GRIDSTATIC_RELEASE     same as --release
+  GRIDSTATIC_CHART       same as --chart
 
-De databaseverbinding krijgt bewust geen commandoregel-optie: die zou in je
-shell-historie belanden en zichtbaar zijn in ps.
+The database connection deliberately has no command-line option: it would end up
+in your shell history and be visible in ps.
 EOF
 }
 
@@ -67,115 +67,116 @@ while [ $# -gt 0 ]; do
     --release)   RELEASE="$2";   shift 2 ;;
     --chart)     CHART="$2";     shift 2 ;;
     --dry-run)   DRY_RUN=1;      shift ;;
-    --help|-h)   gebruik; exit 0 ;;
-    *)           stop "onbekende optie: $1 (probeer --help)" ;;
+    --help|-h)   usage; exit 0 ;;
+    *)           die "unknown option: $1 (try --help)" ;;
   esac
 done
 
-# ── 1. Controleren ───────────────────────────────────────────────────────────
-stap "Controleren wat er op deze machine staat"
+# ── 1. Prerequisites ─────────────────────────────────────────────────────────
+step "Checking this machine"
 
-ontbreekt=0
+missing=0
 if ! command -v kubectl >/dev/null 2>&1; then
-  fout "kubectl ontbreekt — https://kubernetes.io/docs/tasks/tools/"
-  ontbreekt=1
+  err "kubectl is missing -- https://kubernetes.io/docs/tasks/tools/"
+  missing=1
 else
-  goed "kubectl gevonden"
+  ok "kubectl found"
 fi
 
 if ! command -v helm >/dev/null 2>&1; then
-  fout "helm ontbreekt — curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
-  ontbreekt=1
+  err "helm is missing -- curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+  missing=1
 else
-  goed "helm gevonden ($(helm version --short 2>/dev/null || echo onbekend))"
+  ok "helm found ($(helm version --short 2>/dev/null || echo unknown))"
 fi
 
-if [ "$ontbreekt" = 1 ]; then
+if [ "$missing" = 1 ]; then
   if [ "$DRY_RUN" = 1 ]; then
-    let_op "dry-run: ga toch verder"
+    warn "dry-run: continuing anyway"
   else
-    stop "installeer het bovenstaande en probeer opnieuw"
+    die "install the above and try again"
   fi
 elif ! kubectl cluster-info >/dev/null 2>&1; then
   if [ "$DRY_RUN" = 1 ]; then
-    let_op "dry-run: geen cluster bereikbaar, ga toch verder"
+    warn "dry-run: no cluster reachable, continuing anyway"
   else
-    stop "geen cluster bereikbaar — controleer je kubeconfig met 'kubectl cluster-info'"
+    die "no cluster reachable -- check your kubeconfig with 'kubectl cluster-info'"
   fi
 else
-  goed "cluster bereikbaar ($(kubectl config current-context))"
+  ok "cluster reachable ($(kubectl config current-context))"
 fi
 
-# ── 2. Vragen ────────────────────────────────────────────────────────────────
-stap "Je database"
+# ── 2. Database ──────────────────────────────────────────────────────────────
+step "Your database"
 
 DB_URL="${GRIDSTATIC_DB_URL:-}"
 
-# Een herinstallatie is een gewoon geval: helm uninstall haalt alleen weg wat Helm
-# zelf heeft aangemaakt, dus het secret staat er meestal nog. Dan hoef je je
-# connectiestring niet opnieuw op te zoeken.
-HERGEBRUIK=0
-if [ -z "$DB_URL" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1    && kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null 2>&1; then
-  zeg "  Er staat al een secret $DB_SECRET in namespace $NAMESPACE."
-  printf '  Dat gebruiken? [J/n]: '
-  read -r antwoord
-  case "$antwoord" in
+# Reinstalling is a normal case: helm uninstall only removes what Helm created, so
+# the Secret is usually still there. Then there is no need to look up the
+# connection string again.
+REUSE_SECRET=0
+if [ -z "$DB_URL" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 \
+   && kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null 2>&1; then
+  say "  A Secret $DB_SECRET already exists in namespace $NAMESPACE."
+  printf '  Use it? [Y/n]: '
+  read -r answer
+  case "$answer" in
     n|N) : ;;
-    *)   HERGEBRUIK=1 ;;
+    *)   REUSE_SECRET=1 ;;
   esac
 fi
 
-if [ "$HERGEBRUIK" = 1 ]; then
-  goed "bestaand secret hergebruikt — je connectiestring is niet opnieuw nodig"
+if [ "$REUSE_SECRET" = 1 ]; then
+  ok "reusing the existing Secret -- no connection string needed"
 elif [ -z "$DB_URL" ]; then
   cat <<'EOF'
-  Je hebt een eigen PostgreSQL nodig; een gratis Supabase-project volstaat.
-  Pak in het dashboard onder "Connect" de SESSION POOLER-string:
+  You need your own PostgreSQL; a free Supabase project is enough.
+  In the dashboard under "Connect", copy the SESSION POOLER string:
 
-    postgresql://postgres.PROJECTREF:WACHTWOORD@aws-0-REGIO.pooler.supabase.com:5432/postgres?sslmode=require
+    postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
 
-  Niet de directe verbinding (db.<ref>.supabase.co): die bestaat alleen over IPv6
-  en werkt dus niet op een IPv4-cluster.
+  Not the direct connection (db.<ref>.supabase.co): it is IPv6-only and does not
+  work from an IPv4 cluster.
 
-  LET OP: gebruik geen database waarin al een gridstatic-stack draait. Twee bots
-  op dezelfde grid_configs leggen dubbele orders.
+  WARNING: do not use a database another gridstatic stack is already using. Two
+  bots on the same grid_configs place duplicate orders.
 
 EOF
-  printf '  Connectiestring (invoer blijft verborgen): '
+  printf '  Connection string (input stays hidden): '
   read -rs DB_URL
   printf '\n'
 fi
 
-if [ "$HERGEBRUIK" = 0 ]; then
-  [ -n "$DB_URL" ] || stop "geen connectiestring opgegeven"
+if [ "$REUSE_SECRET" = 0 ]; then
+  [ -n "$DB_URL" ] || die "no connection string given"
   case "$DB_URL" in
     postgresql://*|postgres://*) : ;;
-    *) stop "dat ziet er niet uit als een connectiestring (verwacht postgresql://...)" ;;
+    *) die "that does not look like a connection string (expected postgresql://...)" ;;
   esac
   case "$DB_URL" in
-    *:6543/*) let_op "je gebruikt de transaction pooler (6543); de session pooler op 5432 past beter bij een langlopende service" ;;
+    *:6543/*) warn "this is the transaction pooler (6543); the session pooler on 5432 suits a long-running service better" ;;
   esac
-  goed "connectiestring ontvangen (${#DB_URL} tekens)"
+  ok "connection string received (${#DB_URL} characters)"
 fi
 
 # ── 3. Namespace ─────────────────────────────────────────────────────────────
-stap "Namespace $NAMESPACE"
+step "Namespace $NAMESPACE"
 
 if [ "$DRY_RUN" = 0 ] && kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-  goed "bestaat al"
+  ok "already exists"
 else
-  draai kubectl create namespace "$NAMESPACE"
-  [ "$DRY_RUN" = 0 ] && goed "aangemaakt"
+  run kubectl create namespace "$NAMESPACE"
+  if [ "$DRY_RUN" = 0 ]; then ok "created"; fi
 fi
 
 # ── 4. Secret ────────────────────────────────────────────────────────────────
-stap "Secret $DB_SECRET"
+step "Secret $DB_SECRET"
 
-maak_secret() {
-  # Via apply, zodat opnieuw draaien geen "already exists" geeft. De waarde gaat
-  # over een pijp en staat dus niet in de procestabel.
+create_secret() {
+  # Through apply, so running again does not fail with "already exists". The value
+  # travels over a pipe and never appears in the process table.
   if [ "$DRY_RUN" = 1 ]; then
-    printf '       zou draaien: kubectl -n %s create secret generic %s --from-literal=url=<verborgen> | kubectl apply -f -\n' \
+    printf '       would run: kubectl -n %s create secret generic %s --from-literal=url=<hidden> | kubectl apply -f -\n' \
       "$NAMESPACE" "$DB_SECRET"
     return
   fi
@@ -183,31 +184,31 @@ maak_secret() {
     --from-literal=url="$DB_URL" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
-if [ "$HERGEBRUIK" = 1 ]; then
-  goed "ongewijzigd gelaten"
+if [ "$REUSE_SECRET" = 1 ]; then
+  ok "left unchanged"
 else
-  maak_secret
-  [ "$DRY_RUN" = 0 ] && goed "aangemaakt of bijgewerkt"
+  create_secret
+  if [ "$DRY_RUN" = 0 ]; then ok "created or updated"; fi
 fi
 
-# ── 5. Waarden ───────────────────────────────────────────────────────────────
-stap "Waardenbestand $VALUES_FILE"
+# ── 5. Values file ───────────────────────────────────────────────────────────
+step "Values file $VALUES_FILE"
 
 if [ -f "$VALUES_FILE" ]; then
-  goed "bestaat al — ongewijzigd gelaten"
+  ok "already exists -- left unchanged"
 else
   if [ "$DRY_RUN" = 1 ]; then
-    printf '       zou schrijven: %s\n' "$VALUES_FILE"
+    printf '       would write: %s\n' "$VALUES_FILE"
   else
     cat > "$VALUES_FILE" <<EOF
-# Aangemaakt door install.sh. Hier staat geen wachtwoord in: de verbinding zit in
-# het Secret $DB_SECRET. Dit bestand mag je bewaren en in versiebeheer zetten.
+# Created by install.sh. There is no password in here: the connection lives in the
+# Secret $DB_SECRET. You can keep this file and put it under version control.
 database:
   existingSecret: $DB_SECRET
 
 grid:
-  # Rekenbasis voor de ordergrootte, ook live. Bij 20 lijnen en 80% allocatie is
-  # 1000 gelijk aan \$40 per lijn.
+  # Basis for order sizing, live as well. With 20 lines and 80% allocation,
+  # 1000 means \$40 per line.
   startBalance: 1000
   coins:
     BTC-20:
@@ -220,70 +221,70 @@ grid:
       numLines: 20
       leverage: 1
 EOF
-    goed "geschreven"
+    ok "written"
   fi
 fi
 
-# ── 6. Installeren ───────────────────────────────────────────────────────────
-stap "Chart uitrollen"
+# ── 6. Install ───────────────────────────────────────────────────────────────
+step "Deploying the chart"
 
 if [ "$DRY_RUN" = 0 ] && helm status "$RELEASE" -n "$NAMESPACE" >/dev/null 2>&1; then
-  zeg "  release $RELEASE bestaat al — bijwerken"
-  draai helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
+  say "  release $RELEASE already exists -- upgrading"
+  run helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
 else
-  draai helm install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
+  run helm install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
-  stap "Dry-run klaar"
-  zeg "  Er is niets aangeraakt. Draai zonder --dry-run om het echt te doen."
+  step "Dry run finished"
+  say "  Nothing was touched. Run without --dry-run to do it for real."
   exit 0
 fi
-goed "uitgerold"
+ok "deployed"
 
-# ── 7. Controleren ───────────────────────────────────────────────────────────
-stap "Controleren of het werkt"
+# ── 7. Verify ────────────────────────────────────────────────────────────────
+step "Checking that it works"
 
-zeg "  wachten tot de pods klaar zijn (de dal maakt eerst het schema aan)..."
+say "  waiting for the pods to become ready (the dal applies the schema first)..."
 if ! kubectl -n "$NAMESPACE" wait --for=condition=available --timeout=180s \
      deployment/"$RELEASE"-dal deployment/"$RELEASE"-grid-static >/dev/null 2>&1; then
-  let_op "niet alle pods waren binnen drie minuten klaar"
+  warn "not every pod was ready within three minutes"
 fi
 
-problemen=0
+problems=0
 
+# Accept the old Dutch message too, so this script still reads an older chart right.
 schema_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-dal -c schema 2>/dev/null || true)"
 if printf '%s' "$schema_log" | grep -q "CREATE TABLE"; then
-  goed "schema aangebracht"
-elif printf '%s' "$schema_log" | grep -q "wacht op de database"; then
-  fout "de dal komt niet bij je database"
-  zeg "       Vrijwel altijd de directe verbinding in plaats van de session pooler:"
-  zeg "       db.<ref>.supabase.co bestaat alleen over IPv6."
-  problemen=1
+  ok "schema applied"
+elif printf '%s' "$schema_log" | grep -qE "waiting for the database|wacht op de database"; then
+  err "the dal cannot reach your database"
+  say "       Almost always the direct connection instead of the session pooler:"
+  say "       db.<ref>.supabase.co is IPv6-only."
+  problems=1
 else
-  goed "schema stond er al"
+  ok "schema was already in place"
 fi
 
 pods="$(kubectl -n "$NAMESPACE" get pods --no-headers 2>/dev/null || true)"
-niet_klaar="$(printf '%s\n' "$pods" | awk '$3 != "Running" && NF > 0')"
-if [ -n "$niet_klaar" ]; then
-  fout "niet alle pods draaien:"
-  printf '%s\n' "$niet_klaar" | sed 's/^/       /'
-  problemen=1
+not_running="$(printf '%s\n' "$pods" | awk '$3 != "Running" && NF > 0')"
+if [ -n "$not_running" ]; then
+  err "not every pod is running:"
+  printf '%s\n' "$not_running" | sed 's/^/       /'
+  problems=1
 else
-  goed "alle pods draaien"
+  ok "all pods are running"
 fi
 
-herstarts="$(printf '%s\n' "$pods" | awk '$4 > 0 && NF > 0 {print $1" ("$4"x)"}')"
-if [ -n "$herstarts" ]; then
-  let_op "herstart: $herstarts"
-  zeg "       kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static --previous"
+restarts="$(printf '%s\n' "$pods" | awk '$4 > 0 && NF > 0 {print $1" ("$4"x)"}')"
+if [ -n "$restarts" ]; then
+  warn "restarted: $restarts"
+  say "       kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static --previous"
 fi
 
-# Even geduld: er is geen readiness-probe, dus de pod heet "ready" zodra de container
-# draait -- terwijl uvicorn dan nog op de connector en de dal staat te wachten. Eén
-# keer kijken is te vroeg; we wachten tot de regel er is.
-zeg "  wachten tot de bot zijn grid heeft opgebouwd..."
+# The readiness probe makes the wait above meaningful, but the startup log line can
+# still trail it by a moment. Poll for it instead of looking once.
+say "  waiting for the bot to build its grid..."
 bot_log=""
 for _ in $(seq 1 30); do
   bot_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --tail=80 2>/dev/null || true)"
@@ -294,53 +295,55 @@ for _ in $(seq 1 30); do
 done
 
 if printf '%s' "$bot_log" | grep -q "Initialising grid"; then
-  goed "grid aangelegd: $(printf '%s' "$bot_log" | grep -o 'Grid ready — .*' | head -1)"
+  ok "grid built: $(printf '%s' "$bot_log" | grep -o 'Grid ready — .*' | head -1)"
 elif printf '%s' "$bot_log" | grep -q "Recovering state"; then
-  goed "bestaande grid teruggevonden"
+  ok "existing grid recovered"
 else
-  fout "de bot heeft binnen 90 seconden geen grid opgebouwd"
-  laatste="$(printf '%s' "$bot_log" | tail -3)"
-  [ -n "$laatste" ] && printf '%s
-' "$laatste" | sed 's/^/       /'
-  problemen=1
+  err "the bot did not build a grid within 90 seconds"
+  last_lines="$(printf '%s' "$bot_log" | tail -3)"
+  if [ -n "$last_lines" ]; then
+    printf '%s\n' "$last_lines" | sed 's/^/       /'
+  fi
+  problems=1
 fi
 
-zeg "  even kijken of de fill-loop schoon draait (35 seconden)..."
+say "  checking that the fill loop runs cleanly (35 seconds)..."
 sleep 35
-fill_fout="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --since=40s 2>/dev/null | grep "Fill loop error" | head -1 || true)"
-if [ -n "$fill_fout" ]; then
-  fout "fout in de fill-loop:"
-  zeg "       $fill_fout"
-  problemen=1
+fill_error="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --since=40s 2>/dev/null | grep "Fill loop error" | head -1 || true)"
+if [ -n "$fill_error" ]; then
+  err "error in the fill loop:"
+  say "       $fill_error"
+  problems=1
 else
-  goed "fill-loop draait schoon"
+  ok "fill loop runs cleanly"
 fi
 
-# ── Oordeel ──────────────────────────────────────────────────────────────────
-if [ "$problemen" = 0 ]; then
-  stap "${groen}Klaar${uit} — je stack draait in shadow"
+# ── Verdict ──────────────────────────────────────────────────────────────────
+if [ "$problems" = 0 ]; then
+  step "${green}Done${reset} -- your stack is running"
   cat <<EOF
 
-  Meekijken:
+  Follow along:
     kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static -f
 
-  Je grids aanpassen: bewerk $VALUES_FILE en draai
+  Change your grids: edit $VALUES_FILE, then run
     helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
 
-  Met echt geld handelen: zie 'Live gaan' in de README -- dat gaat met de hand,
-  met opzet: het is geen handeling die je snel wilt doen.
+  Trading with real money: see 'Going live' in the README. That step is manual on
+  purpose -- it is not something you want to do quickly.
 EOF
 else
-  stap "${rood}Er is iets mis${uit}"
+  step "${red}Something is wrong${reset}"
   cat <<EOF
 
-  Hierboven staat wat er niet klopte. Meer zien:
+  The problems are listed above. To see more:
     kubectl -n $NAMESPACE get pods
     kubectl -n $NAMESPACE logs deploy/$RELEASE-dal -c schema
     kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static --tail=50
 
-  Opnieuw beginnen kan zonder risico -- er staat niets met echt geld:
+  If no grid is live yet, starting over is safe:
     helm uninstall $RELEASE -n $NAMESPACE
+  If a grid already trades with real money, check the exchange before you do.
 EOF
   exit 1
 fi

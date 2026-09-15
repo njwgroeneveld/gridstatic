@@ -17,16 +17,16 @@ jobs:
       - name: shellcheck
         run: shellcheck install.sh
 
-      - name: install.sh draait droog zonder iets aan te raken
+      - name: install.sh dry run touches nothing
         env:
-          GRIDSTATIC_DB_URL: postgresql://postgres.test:geheim@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
+          GRIDSTATIC_DB_URL: postgresql://postgres.test:secret@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
         run: bash install.sh --dry-run
 
-      - name: Geen geheim in de dry-run-uitvoer
+      - name: No secret in the dry-run output
         env:
-          GRIDSTATIC_DB_URL: postgresql://postgres.test:zeergeheimwachtwoord@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
+          GRIDSTATIC_DB_URL: postgresql://postgres.test:verysecretpassword@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
         run: |
-          if bash install.sh --dry-run | grep -q zeergeheimwachtwoord; then
-            echo "FOUT: de dry-run toont het wachtwoord"
+          if bash install.sh --dry-run | grep -q verysecretpassword; then
+            echo "ERROR: the dry run prints the password"
             exit 1
           fi

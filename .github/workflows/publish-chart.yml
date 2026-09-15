@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
 
-      - name: Schema in de chart is gelijk aan de bron
+      - name: Schema in the chart matches the source
         run: diff db/schema.sql chart/files/schema.sql
 
       - name: Lint
@@ -28,31 +28,31 @@ jobs:
       - name: Render
         run: helm template t ./chart --set database.existingSecret=test-db-secret > /dev/null
 
-      - name: Weiger een chart zonder database.existingSecret
+      - name: Refuse to render without database.existingSecret
         run: |
           if helm template t ./chart > /dev/null 2>&1; then
-            echo "FOUT: de chart rendert zonder database.existingSecret"
+            echo "ERROR: the chart renders without database.existingSecret"
             exit 1
           fi
 
-      - name: Het schema zit in de gerenderde configmap
+      - name: The schema is in the rendered ConfigMap
         run: |
           helm template t ./chart --set database.existingSecret=test-db-secret \
             | grep -q "CREATE UNIQUE INDEX IF NOT EXISTS grid_orders_one_open_buy_per_level"
 
-      - name: Standaard draait alles in shadow
+      - name: Everything runs in shadow by default
         run: |
-          # Commentaarregels in de templates noemen "shadow: false" om uit te leggen
-          # wat het doet. Alleen echte instellingen tellen, dus commentaar eruit.
+          # Comment lines in the templates mention "shadow: false" to explain what it
+          # does. Only real settings count, so strip comments first.
           if helm template t ./chart --set database.existingSecret=test-db-secret | grep -v '^[[:space:]]*#' | grep -q "shadow: false"; then
-            echo "FOUT: de meegeleverde waarden zetten een grid op shadow: false"
+            echo "ERROR: the default values put a grid on shadow: false"
             exit 1
           fi
 
-      - name: De chart maakt zelf geen Secrets aan
+      - name: The chart creates no Secrets of its own
         run: |
           if helm template t ./chart --set database.existingSecret=test-db-secret | grep -q "^kind: Secret"; then
-            echo "FOUT: de chart rendert een Secret; geheimen horen niet door Helm te lopen"
+            echo "ERROR: the chart renders a Secret; secrets must not pass through Helm"
             exit 1
           fi
 
