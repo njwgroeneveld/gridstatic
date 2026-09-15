@@ -5,39 +5,39 @@ import src.main as m
 
 
 @pytest.mark.asyncio
-async def test_wait_for_stopt_zodra_de_probe_lukt(monkeypatch):
-    slapen = []
-    monkeypatch.setattr(m.asyncio, "sleep", AsyncMock(side_effect=lambda d: slapen.append(d)))
+async def test_wait_for_returns_as_soon_as_the_probe_succeeds(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(m.asyncio, "sleep", AsyncMock(side_effect=lambda d: sleeps.append(d)))
 
-    pogingen = {"n": 0}
+    attempts = {"n": 0}
 
     async def probe():
-        pogingen["n"] += 1
-        if pogingen["n"] < 3:
-            raise ConnectionError("nog niet")
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise ConnectionError("not yet")
 
     await m._wait_for("dal", probe)
 
-    assert pogingen["n"] == 3
-    assert slapen == [2.0, 2.0]
+    assert attempts["n"] == 3
+    assert sleeps == [2.0, 2.0]
 
 
 @pytest.mark.asyncio
-async def test_wait_for_geeft_luid_op_na_alle_pogingen(monkeypatch):
+async def test_wait_for_gives_up_loudly_after_all_attempts(monkeypatch):
     monkeypatch.setattr(m.asyncio, "sleep", AsyncMock())
 
     async def probe():
-        raise ConnectionError("blijft weg")
+        raise ConnectionError("still down")
 
-    with pytest.raises(RuntimeError, match="dal niet bereikbaar na 60s"):
+    with pytest.raises(RuntimeError, match="dal not reachable after 60s"):
         await m._wait_for("dal", probe, attempts=30, delay=2.0)
 
 
 @pytest.mark.asyncio
-async def test_lifespan_wacht_op_connector_en_op_de_dal(monkeypatch, tmp_path):
-    """Regressietest. De dal is bij een verse installatie later klaar dan grid-static:
-    zijn initContainer brengt eerst het schema aan. Wachtte de opstart alleen op de
-    connector, dan viel hij om op de eerste get_active_configs en herstartte de pod."""
+async def test_lifespan_waits_for_the_connector_and_the_dal(monkeypatch, tmp_path):
+    """Regression test. On a fresh install the dal is ready later than grid-static:
+    its initContainer applies the schema first. When startup only waited for the
+    connector, it failed on the first get_active_configs and the pod restarted."""
     settings = tmp_path / "settings.yaml"
     settings.write_text(
         "connector_url: http://c:8080\n"
@@ -58,12 +58,12 @@ async def test_lifespan_wacht_op_connector_en_op_de_dal(monkeypatch, tmp_path):
     monkeypatch.setenv("SETTINGS_FILE", str(settings))
     m._grids.clear()
 
-    gewacht = []
+    waited_for = []
 
-    async def nep_wait(naam, probe, **kwargs):
-        gewacht.append(naam)
+    async def fake_wait(name, probe, **kwargs):
+        waited_for.append(name)
 
-    monkeypatch.setattr(m, "_wait_for", nep_wait)
+    monkeypatch.setattr(m, "_wait_for", fake_wait)
 
     grid = AsyncMock()
     grid.dal.get_active_configs.return_value = []
@@ -75,5 +75,5 @@ async def test_lifespan_wacht_op_connector_en_op_de_dal(monkeypatch, tmp_path):
     finally:
         m._grids.clear()
 
-    assert gewacht == ["connector", "dal"]
+    assert waited_for == ["connector", "dal"]
     grid.initialize.assert_awaited_once()

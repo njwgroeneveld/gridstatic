@@ -19,14 +19,14 @@ _DAL_URL: str = os.getenv("DAL_URL", "http://dal:8080")
 _CONNECTOR_URL: str = os.getenv("CONNECTOR_URL", "http://connector:8080")
 
 
-def _funding_regel(funding_by_cfg: dict[int, float] | None, cfg_id: int,
+def _funding_line(funding_by_cfg: dict[int, float] | None, cfg_id: int,
                    realized: float) -> str:
-    """Funding staat naast de gridwinst, nooit erin: het wordt per uur over de
-    netto positie afgerekend en is niet aan een losse trade toe te rekenen."""
+    """Funding sits next to the grid profit, never inside it: it is charged hourly on
+    the net position and cannot be attributed to any single trade."""
     funding = (funding_by_cfg or {}).get(cfg_id, 0.0)
     if not funding:
         return ""
-    return f"\nFunding: {funding:+.2f}$ | Netto: {realized + funding:+.2f}$"
+    return f"\nFunding: {funding:+.2f}$ | Net: {realized + funding:+.2f}$"
 
 
 def _format_grid_status(configs: list[dict], orders: list[dict],
@@ -34,7 +34,7 @@ def _format_grid_status(configs: list[dict], orders: list[dict],
                          trades_by_cfg: dict[int, list], mids: dict,
                          funding_by_cfg: dict[int, float] | None = None) -> str:
     if not configs:
-        return "📊 <b>Geen actieve grids</b>"
+        return "📊 <b>No active grids</b>"
 
     lines = ["📊 <b>GRID STATUS</b>"]
 
@@ -85,15 +85,15 @@ def _format_grid_status(configs: list[dict], orders: list[dict],
                 if buy_px and size:
                     unrealized += (current - buy_px) / buy_px * size * leverage
 
-        price_str = f"${current:,.0f}" if current else "onbekend"
+        price_str = f"${current:,.0f}" if current else "unknown"
         real_str = f"{realized:+.2f}$" if closed else "–"
         unreal_str = f"{unrealized:+.2f}$" if current and open_trades else "–"
 
         lines.append(
             f"\n<b>── {coin} {num_lines}L{lev_tag} [{strategy}]{tag} ──</b>\n"
-            f"${lower:,.0f} ↔ ${upper:,.0f} | Nu: {price_str}\n"
-            f"Gerealiseerd: {real_str} | Open P&amp;L: {unreal_str}"
-            + _funding_regel(funding_by_cfg, cfg_id, realized)
+            f"${lower:,.0f} ↔ ${upper:,.0f} | Now: {price_str}\n"
+            f"Realised: {real_str} | Open P&amp;L: {unreal_str}"
+            + _funding_line(funding_by_cfg, cfg_id, realized)
         )
 
         for i in range(num_lines - 1, -1, -1):
@@ -136,10 +136,10 @@ def _handle_status() -> None:
             resp.raise_for_status()
             configs.extend(resp.json())
         except Exception as e:
-            log.warning(f"/status grid-configs query mislukt voor strategy={strategy}: {e}")
+            log.warning(f"/status grid-configs query failed for strategy={strategy}: {e}")
 
     if not configs:
-        _send_telegram("⚠️ Kon grid configs niet ophalen van DAL")
+        _send_telegram("⚠️ Could not fetch grid configs from the DAL")
         return
 
     coins = list({c["coin"] for c in configs})
@@ -152,14 +152,14 @@ def _handle_status() -> None:
             resp.raise_for_status()
             orders.extend(resp.json())
         except Exception as e:
-            log.warning(f"/status grid-orders query mislukt voor {coin}: {e}")
+            log.warning(f"/status grid-orders query failed for {coin}: {e}")
         try:
             resp = _requests.get(f"{_DAL_URL}/grid-orders",
                                  params={"coin": coin, "status": "FILLED"}, timeout=10)
             resp.raise_for_status()
             filled_orders.extend(resp.json())
         except Exception as e:
-            log.warning(f"/status filled-orders query mislukt voor {coin}: {e}")
+            log.warning(f"/status filled-orders query failed for {coin}: {e}")
 
     funding_by_cfg: dict[int, float] = {}
     for cfg in configs:
@@ -170,7 +170,7 @@ def _handle_status() -> None:
             resp.raise_for_status()
             funding_by_cfg[cfg["id"]] = float(resp.json().get("total_usdc") or 0)
         except Exception as e:
-            log.warning(f"/status funding query mislukt voor config {cfg['id']}: {e}")
+            log.warning(f"/status funding query failed for config {cfg['id']}: {e}")
 
     trades_by_cfg: dict[int, list] = {}
     for cfg in configs:
@@ -181,21 +181,21 @@ def _handle_status() -> None:
             resp.raise_for_status()
             trades_by_cfg[cfg["id"]] = resp.json()
         except Exception as e:
-            log.warning(f"/status grid-trades query mislukt voor config {cfg['id']}: {e}")
+            log.warning(f"/status grid-trades query failed for config {cfg['id']}: {e}")
 
     try:
         resp = _requests.get(f"{_CONNECTOR_URL}/mids", timeout=5)
         resp.raise_for_status()
         mids = resp.json()
     except Exception as e:
-        log.warning(f"/status connector query mislukt: {e}")
+        log.warning(f"/status connector query failed: {e}")
         mids = {}
 
     parts = []
     if configs:
         parts.append(_format_grid_status(configs, orders, filled_orders, trades_by_cfg,
                                          mids, funding_by_cfg))
-    _send_telegram("\n".join(parts) if parts else "📊 <b>Geen actieve grids</b>")
+    _send_telegram("\n".join(parts) if parts else "📊 <b>No active grids</b>")
 
 
 def _poll_commands() -> None:
@@ -223,9 +223,9 @@ def _poll_commands() -> None:
 async def lifespan(_app: FastAPI):
     if _BOT_TOKEN and _CHAT_ID:
         threading.Thread(target=_poll_commands, daemon=True, name="tg-commands").start()
-        log.info("Telegram command listener gestart (/status)")
+        log.info("Telegram command listener started (/status)")
     else:
-        log.warning("Telegram credentials niet geconfigureerd — command listener overgeslagen")
+        log.warning("Telegram credentials not configured -- command listener skipped")
     yield
 
 
@@ -273,7 +273,7 @@ def _split_message(text: str) -> list[str]:
 
 def _send_telegram(text: str) -> None:
     if not _BOT_TOKEN or not _CHAT_ID:
-        log.warning("Telegram credentials niet geconfigureerd — alert overgeslagen")
+        log.warning("Telegram credentials not configured -- alert skipped")
         return
     for chunk in _split_message(text):
         try:
@@ -283,12 +283,12 @@ def _send_telegram(text: str) -> None:
                 timeout=5,
             )
             if not resp.ok:
-                log.error(f"Telegram send mislukt: {resp.status_code} {resp.text}")
+                log.error(f"Telegram send failed: {resp.status_code} {resp.text}")
             resp.raise_for_status()
         except _requests.HTTPError:
             pass  # already logged above
         except Exception as e:
-            log.warning(f"Telegram send tijdelijk mislukt: {e}")
+            log.warning(f"Telegram send temporarily failed: {e}")
 
 
 @app.get("/health")

@@ -90,7 +90,7 @@ def test_place_limit_order_returns_order_id():
 
 
 def test_place_limit_order_recovers_oid_via_open_orders():
-    """OID ontbreekt in response → hersteld via open orders (order staat nog resting)."""
+    """OID missing from the response -> recovered from open orders (order still resting)."""
     client = _make_client()
     client._info.meta.return_value = {"universe": [{"name": "ETH", "szDecimals": 4}]}
     client._exchange.order.return_value = {
@@ -110,7 +110,7 @@ def test_place_limit_order_recovers_oid_via_open_orders():
 
 
 def test_place_limit_order_recovers_oid_via_fills():
-    """OID ontbreekt in response, niet in open orders → hersteld via recente fills."""
+    """OID missing from the response and not in open orders -> recovered from recent fills."""
     client = _make_client()
     client._info.meta.return_value = {"universe": [{"name": "ETH", "szDecimals": 4}]}
     client._exchange.order.return_value = {
@@ -130,7 +130,7 @@ def test_place_limit_order_recovers_oid_via_fills():
 
 
 def test_place_limit_order_oid_none_when_recovery_fails():
-    """OID niet te herstellen → hl_order_id=None maar status=ok."""
+    """OID cannot be recovered -> hl_order_id=None but status=ok."""
     client = _make_client()
     client._info.meta.return_value = {"universe": [{"name": "ETH", "szDecimals": 4}]}
     client._exchange.order.return_value = {
@@ -148,11 +148,11 @@ def test_place_limit_order_oid_none_when_recovery_fails():
 
 
 def test_recover_oid_ignores_reduce_only_orders():
-    """TP orders (reduce_only=True) worden niet als entry OID gezien."""
+    """TP orders (reduce_only=True) are not mistaken for the entry OID."""
     client = _make_client()
     client._info.frontend_open_orders.return_value = [
         {"coin": "ETH", "isBuy": True, "limitPx": "2000.0",
-         "reduceOnly": True, "oid": 55},   # TP order — moet genegeerd worden
+         "reduceOnly": True, "oid": 55},   # TP order -- must be ignored
     ]
     client._info.user_fills.return_value = []
 
@@ -163,7 +163,7 @@ def test_recover_oid_ignores_reduce_only_orders():
 
 
 def test_place_limit_order_rondt_prijs_af_naar_hl_precisie():
-    """Gridlevels als 75421.05 hebben 7 significante cijfers; HL accepteert er 5."""
+    """Grid levels like 75421.05 have 7 significant digits; Hyperliquid accepts 5."""
     client = _make_client()
     client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
     client._exchange.order.return_value = {
@@ -176,7 +176,7 @@ def test_place_limit_order_rondt_prijs_af_naar_hl_precisie():
 
 
 def test_place_limit_order_meldt_afwijzing_als_fout():
-    """HL antwoordt met status ok en de afwijzing in statuses[0] -- geen geslaagde order."""
+    """Hyperliquid answers status ok with the rejection in statuses[0] -- not a successful order."""
     client = _make_client()
     client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
     client._exchange.order.return_value = {
@@ -185,13 +185,13 @@ def test_place_limit_order_meldt_afwijzing_als_fout():
     }
     result = client.place_limit_order("BTC", "BUY", 75421.05, 18.56, leverage=3)
     assert result["status"] == "error"
-    assert "invalid price" in result["reden"]
+    assert "invalid price" in result["reason"]
 
 
 def test_place_limit_order_multiplies_size_by_leverage():
-    """De hefboom vergroot de positie. De leverage-instelling op de exchange
-    verlaagt alleen de margin-eis en maakt de order zelf niet groter, dus de
-    vermenigvuldiging moet hier gebeuren."""
+    """Leverage enlarges the position. The exchange-side leverage setting only lowers
+    the margin requirement and never makes the order itself bigger, so the
+    multiplication has to happen here."""
     client = _make_client()
     client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
     client._exchange.order.return_value = {

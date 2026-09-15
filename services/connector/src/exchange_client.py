@@ -65,7 +65,7 @@ class ExchangeClient:
 
     def get_open_orders(self, coin: str) -> list[dict]:
         """Raises when the exchange cannot be read. Swallowing that into an empty
-        list made "API onbereikbaar" indistinguishable from "geen orders", and
+        list made "API unreachable" indistinguishable from "no orders", and
         recover_state reads an empty book as "alles is gevuld"."""
         orders = self._info.frontend_open_orders(self._wallet_address)
         return [o for o in (orders or []) if o.get("coin") == coin]
@@ -85,33 +85,33 @@ class ExchangeClient:
         try:
             recs = self._info.user_funding_history(self._wallet_address, since_ms) or []
         except Exception as e:
-            log.warning(f"funding ophalen mislukt: {e}")
+            log.warning(f"fetching funding failed: {e}")
             return []
-        uit = []
+        records = []
         for r in recs:
             d = r.get("delta", {})
             if d.get("type") != "funding":
                 continue
-            uit.append({"time": int(r["time"]), "coin": d["coin"],
-                        "usdc": float(d["usdc"]),
-                        "funding_rate": float(d["fundingRate"]),
-                        "szi": float(d["szi"])})
-        return uit
+            records.append({"time": int(r["time"]), "coin": d["coin"],
+                            "usdc": float(d["usdc"]),
+                            "funding_rate": float(d["fundingRate"]),
+                            "szi": float(d["szi"])})
+        return records
 
     def set_leverage(self, coin: str, leverage: int) -> None:
         try:
             self._exchange.update_leverage(leverage, coin, is_cross=False)
         except Exception as e:
-            log.warning(f"[{coin}] leverage instellen mislukt: {e}")
+            log.warning(f"[{coin}] setting leverage failed: {e}")
 
     def cancel_order(self, coin: str, oid: str) -> dict:
         try:
             result = self._exchange.cancel(coin, int(oid))
             if result.get("status") == "ok":
                 return {"status": "ok"}
-            return {"status": "error", "reden": str(result.get("response", "onbekend"))}
+            return {"status": "error", "reason": str(result.get("response", "unknown"))}
         except Exception as e:
-            return {"status": "error", "reden": str(e)}
+            return {"status": "error", "reason": str(e)}
 
     def place_limit_order(self, coin: str, direction: str, price: float,
                           size_usd: float, leverage: int = 3) -> dict:
@@ -123,7 +123,7 @@ class ExchangeClient:
             # order. Notional = size_usd * leverage.
             sz = round(size_usd * leverage / px, self.get_sz_decimals(coin))
             if sz <= 0:
-                return {"status": "error", "reden": "Positiegrootte te klein"}
+                return {"status": "error", "reason": "position size too small"}
             import time as _time
             placed_at_ms = int(_time.time() * 1000)
             result = self._exchange.order(coin, direction == "BUY", sz, px,
@@ -131,26 +131,26 @@ class ExchangeClient:
             if result.get("status") == "ok":
                 statuses = result["response"]["data"]["statuses"]
                 if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reden": statuses[0]["error"]}
+                    return {"status": "error", "reason": statuses[0]["error"]}
                 oid = (statuses[0].get("resting", {}).get("oid")
                        or statuses[0].get("filled", {}).get("oid"))
                 if oid is None:
-                    log.warning(f"[{coin}] Limit order OK maar geen OID in response: {statuses[0]}")
+                    log.warning(f"[{coin}] limit order OK but no OID in response: {statuses[0]}")
                     oid = self._recover_oid(coin, direction, px, placed_at_ms)
                 return {"status": "ok", "hl_order_id": str(oid) if oid is not None else None,
                         "sz_coin": sz}
-            return {"status": "error", "reden": str(result.get("response", "onbekend"))}
+            return {"status": "error", "reason": str(result.get("response", "unknown"))}
         except Exception as e:
-            return {"status": "error", "reden": str(e)}
+            return {"status": "error", "reason": str(e)}
 
     def _recover_oid(self, coin: str, direction: str, price: float,
                      placed_at_ms: int) -> int | None:
-        """Herstel OID via open orders of recente fills wanneer initieel ontbreekt."""
+        """Recover the OID from open orders or recent fills when the response lacked one."""
         import time as _time
         _time.sleep(0.5)
         is_buy = direction == "BUY"
 
-        # Stap 1: open orders (order staat nog als resting)
+        # Step 1: open orders (the order is still resting)
         try:
             orders = self._info.frontend_open_orders(self._wallet_address)
             for o in orders:
@@ -160,12 +160,12 @@ class ExchangeClient:
                         and abs(float(o.get("limitPx", 0)) - price) / price < 0.002):
                     oid = o.get("oid")
                     if oid is not None:
-                        log.info(f"[{coin}] OID hersteld via open orders: {oid}")
+                        log.info(f"[{coin}] OID recovered from open orders: {oid}")
                         return oid
         except Exception as e:
-            log.warning(f"[{coin}] Open orders query mislukt bij OID recovery: {e}")
+            log.warning(f"[{coin}] open orders query failed during OID recovery: {e}")
 
-        # Stap 2: recente fills (order direct gevuld)
+        # Step 2: recent fills (the order filled immediately)
         try:
             fills = self._info.user_fills(self._wallet_address)
             fill_side = "B" if is_buy else "A"
@@ -175,12 +175,12 @@ class ExchangeClient:
                         and int(f.get("time", 0)) >= placed_at_ms):
                     oid = f.get("oid")
                     if oid is not None:
-                        log.info(f"[{coin}] OID hersteld via fills: {oid}")
+                        log.info(f"[{coin}] OID recovered from fills: {oid}")
                         return oid
         except Exception as e:
-            log.warning(f"[{coin}] Fills query mislukt bij OID recovery: {e}")
+            log.warning(f"[{coin}] fills query failed during OID recovery: {e}")
 
-        log.error(f"[{coin}] OID recovery mislukt — order niet te traceren op HL")
+        log.error(f"[{coin}] OID recovery failed -- order cannot be traced on Hyperliquid")
         return None
 
     def place_tp_limit_order(self, coin: str, direction: str,
@@ -189,21 +189,21 @@ class ExchangeClient:
             is_buy = direction == "SELL"
             sz = round(sz_coin, self.get_sz_decimals(coin))
             if sz <= 0:
-                return {"status": "error", "reden": "TP size te klein"}
+                return {"status": "error", "reason": "TP size too small"}
             result = self._exchange.order(coin, is_buy, sz, _round_price(limit_price),
                                           {"limit": {"tif": "Gtc"}}, reduce_only=True)
             if result.get("status") == "ok":
                 statuses = result["response"]["data"]["statuses"]
                 if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reden": statuses[0]["error"]}
+                    return {"status": "error", "reason": statuses[0]["error"]}
                 oid = (statuses[0].get("resting", {}).get("oid")
                        or statuses[0].get("filled", {}).get("oid"))
                 if oid is None:
-                    log.warning(f"[{coin}] TP order OK maar geen OID in response: {statuses[0]}")
+                    log.warning(f"[{coin}] TP order OK but no OID in response: {statuses[0]}")
                 return {"status": "ok", "hl_order_id": str(oid) if oid is not None else None}
-            return {"status": "error", "reden": str(result.get("response", "onbekend"))}
+            return {"status": "error", "reason": str(result.get("response", "unknown"))}
         except Exception as e:
-            return {"status": "error", "reden": str(e)}
+            return {"status": "error", "reason": str(e)}
 
     def place_sl_trigger_order(self, coin: str, direction: str,
                                sz_coin: float, trigger_price: float) -> dict:
@@ -211,7 +211,7 @@ class ExchangeClient:
             is_buy = direction == "SELL"
             sz = round(sz_coin, self.get_sz_decimals(coin))
             if sz <= 0:
-                return {"status": "error", "reden": "SL size te klein"}
+                return {"status": "error", "reason": "SL size too small"}
             tp = _round_price(trigger_price)
             lp = _round_price(tp * (1.05 if is_buy else 0.95))
             result = self._exchange.order(
@@ -222,16 +222,16 @@ class ExchangeClient:
             if result.get("status") == "ok":
                 statuses = result["response"]["data"]["statuses"]
                 if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reden": statuses[0]["error"]}
+                    return {"status": "error", "reason": statuses[0]["error"]}
                 oid = (statuses[0].get("resting", {}).get("oid")
                        or statuses[0].get("filled", {}).get("oid")
                        or statuses[0].get("triggered", {}).get("oid"))
                 if oid is None:
-                    log.warning(f"[{coin}] SL trigger order OK maar geen OID in response: {statuses[0]}")
+                    log.warning(f"[{coin}] SL trigger order OK but no OID in response: {statuses[0]}")
                 return {"status": "ok", "hl_order_id": str(oid) if oid is not None else None}
-            return {"status": "error", "reden": str(result.get("response", "onbekend"))}
+            return {"status": "error", "reason": str(result.get("response", "unknown"))}
         except Exception as e:
-            return {"status": "error", "reden": str(e)}
+            return {"status": "error", "reason": str(e)}
 
     def close_position_market(self, coin: str, direction: str,
                               size_usd: float, entry_price: float) -> dict:
@@ -240,11 +240,11 @@ class ExchangeClient:
             close_ms = int(_time.time() * 1000)
             result = self._exchange.market_close(coin)
             if result is None:
-                return {"status": "not_found", "reden": "Positie niet gevonden op exchange"}
+                return {"status": "not_found", "reason": "position not found on exchange"}
             if result.get("status") == "ok":
                 statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
                 if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reden": statuses[0]["error"]}
+                    return {"status": "error", "reason": statuses[0]["error"]}
                 oid = str(statuses[0].get("filled", {}).get("oid", "")) if statuses else ""
                 try:
                     fills = self._info.user_fills_by_time(self._wallet_address, close_ms - 3000) or []
@@ -254,9 +254,9 @@ class ExchangeClient:
                                    and f.get("closedPnl") is not None]
                     closed_pnl = round(sum(float(f["closedPnl"]) for f in close_fills), 2) if close_fills else None
                 except Exception as e:
-                    log.warning(f"[{coin}] closedPnl ophalen mislukt: {e}")
+                    log.warning(f"[{coin}] fetching closedPnl failed: {e}")
                     closed_pnl = None
                 return {"status": "ok", "closed_pnl": closed_pnl}
-            return {"status": "error", "reden": str(result.get("response", "onbekend"))}
+            return {"status": "error", "reason": str(result.get("response", "unknown"))}
         except Exception as e:
-            return {"status": "error", "reden": str(e)}
+            return {"status": "error", "reason": str(e)}

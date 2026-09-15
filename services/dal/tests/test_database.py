@@ -81,13 +81,13 @@ def test_insert_grid_trade_returns_row(db):
 
 
 
-def test_execute_geeft_floats_terug_geen_decimals(db):
-    """Regressietest. Geldkolommen staan op numeric, en psycopg2 levert die als
-    Decimal. FastAPI serialiseert een Decimal op een route met een dict-annotatie
-    als JSON-string (Pydantic v2), dus de bot kreeg "83000" waar hij 83000
-    verwacht. Hij vergelijkt zijn grenzen met deze waarden om zijn eigen grid te
-    herkennen: met een string matcht dat nooit, en dan maakt hij bij elke herstart
-    een nieuwe config aan en legt hij een tweede laag orders."""
+def test_execute_returns_floats_not_decimals(db):
+    """Regression test. Money columns are numeric, and psycopg2 returns them as
+    Decimal. FastAPI serialises a Decimal on a route with a dict annotation as a JSON
+    string (Pydantic v2), so the bot received "83000" where it expected 83000. It
+    compares its bounds with these values to recognise its own grid: a string never
+    matches, so on every restart it would create a new config and a second layer of
+    orders."""
     cur = MagicMock()
     cur.fetchall.return_value = [{
         "upper": Decimal("83000"),
@@ -106,6 +106,6 @@ def test_execute_geeft_floats_terug_geen_decimals(db):
 
     assert isinstance(row["upper"], float) and row["upper"] == 83000
     assert isinstance(row["price"], float)
-    # wat geen Decimal is, blijft onaangeroerd
+    # anything that is not a Decimal is left untouched
     assert row["coin"] == "BTC" and row["level"] == 10
     assert row["shadow"] is True and row["filled_price"] is None

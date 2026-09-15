@@ -237,7 +237,7 @@ class StaticGrid(BaseStrategy):
             # resting order would look filled, and each one would get a sell
             # placed against a position that does not exist. Skip reconciling and
             # let the fill loop report what really happened.
-            log.error(f"[{self.coin_key}] Recovery overgeslagen -- open orders onleesbaar: {e}")
+            log.error(f"[{self.coin_key}] Recovery skipped -- open orders unreadable: {e}")
             metrics.grid_errors_total.labels(type="recover_state").inc()
             return
         exchange_oids = {str(o.get("oid", "")) for o in exchange_orders}
@@ -369,7 +369,7 @@ class StaticGrid(BaseStrategy):
             try:
                 await self.connector.cancel_order(self.coin, sell["exchange_order_id"])
             except Exception as e:
-                log.error(f"[{self.coin_key}] kon verkooporder {sell_id} niet intrekken: {e}")
+                log.error(f"[{self.coin_key}] could not cancel sell order {sell_id}: {e}")
                 metrics.grid_errors_total.labels(type="order_cancel").inc()
                 return
         await self.dal.patch_order(sell_id, {"status": "CANCELLED"})
@@ -401,11 +401,11 @@ class StaticGrid(BaseStrategy):
 
         notional = sz * px
         if trade:
-            eerder = float(trade["size_usd"]) * leverage
-            sz += eerder / float(trade["buy_price"])
-            notional += eerder
+            previous = float(trade["size_usd"]) * leverage
+            sz += previous / float(trade["buy_price"])
+            notional += previous
             fee = round(float(trade.get("fee_usd") or 0) + fee, 6)
-            px = notional / sz  # gewogen gemiddelde instap over alle stukken
+            px = notional / sz  # volume-weighted entry across all pieces
             await self.dal.patch_trade(trade["id"], {
                 "buy_price": px,
                 "size_usd": round(notional / leverage, 2),
@@ -521,17 +521,17 @@ class StaticGrid(BaseStrategy):
         if self.shadow:
             return
         try:
-            sinds = await self.dal.get_last_funding_ms(self.coin, False)
-            if sinds is None:
-                sinds = _now_ms() - 7 * 24 * 3600 * 1000
-            for rec in await self.connector.get_funding(sinds + 1):
+            since = await self.dal.get_last_funding_ms(self.coin, False)
+            if since is None:
+                since = _now_ms() - 7 * 24 * 3600 * 1000
+            for rec in await self.connector.get_funding(since + 1):
                 if rec["coin"] != self.coin:
                     continue
                 rec["grid_config_id"] = self.grid_config_id
                 rec["shadow"] = False
                 await self.dal.insert_grid_funding(rec)
         except Exception as e:
-            log.warning(f"[{self.coin_key}] funding bijwerken mislukt: {e}")
+            log.warning(f"[{self.coin_key}] updating funding failed: {e}")
 
     async def _health_check(self) -> None:
         await self._record_funding()

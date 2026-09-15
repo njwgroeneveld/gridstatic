@@ -16,22 +16,22 @@ def format_alert(alert_type: str, bot: str, payload: dict) -> str:
         lower = payload.get("lower", 0)
         upper = payload.get("upper", 0)
         num_lines = payload.get("num_lines", 0)
-        return (f"{prefix}🚀 <b>[{coin}] Grid geïnitialiseerd</b>\n"
+        return (f"{prefix}🚀 <b>[{coin}] Grid initialised</b>\n"
                 f"Range: ${lower:,.0f} – ${upper:,.0f}\n"
                 f"Lines: {num_lines}")
 
     if alert_type == "buy_placed":
         price = payload.get("price", 0)
         level = payload.get("level", 0)
-        return (f"{prefix}📋 <b>[{coin}] BUY limit gezet</b>\n"
-                f"Prijs: ${price:,.2f} (level {level})")
+        return (f"{prefix}📋 <b>[{coin}] BUY limit placed</b>\n"
+                f"Price: ${price:,.2f} (level {level})")
 
     if alert_type == "buy_filled":
         filled_price = payload.get("filled_price", 0)
         sell_price = payload.get("sell_price", 0)
         label = _grid_label(payload)
-        return (f"{prefix}✅ <b>[{label}] BUY gevuld</b>\n"
-                f"Fill: ${filled_price:,.2f} → SELL gezet op ${sell_price:,.2f}")
+        return (f"{prefix}✅ <b>[{label}] BUY filled</b>\n"
+                f"Fill: ${filled_price:,.2f} → SELL placed at ${sell_price:,.2f}")
 
     if alert_type == "trade_closed":
         buy_price = payload.get("buy_price", 0)
@@ -47,19 +47,19 @@ def format_alert(alert_type: str, bot: str, payload: dict) -> str:
         side = payload.get("side", "?")
         level_price = payload.get("level_price", 0)
         label = _grid_label(payload)
-        return (f"⚠️ <b>[{label}] Rand bereikt ({side})</b>\n"
-                f"Laatste level: ${level_price:,.2f}")
+        return (f"⚠️ <b>[{label}] Edge reached ({side})</b>\n"
+                f"Last level: ${level_price:,.2f}")
 
     if alert_type == "outside_grid":
         price = payload.get("price", 0)
         bound = payload.get("bound", 0)
         side = payload.get("side", "?")
         label = _grid_label(payload)
-        return (f"🚨 <b>[{label}] Prijs buiten grid ({side})</b>\n"
-                f"Prijs: ${price:,.2f} | Grens: ${bound:,.2f}")
+        return (f"🚨 <b>[{label}] Price outside grid ({side})</b>\n"
+                f"Price: ${price:,.2f} | Bound: ${bound:,.2f}")
 
     if alert_type == "error":
-        msg = payload.get("message", "onbekende fout")
-        return f"❌ <b>[{bot}] Fout</b>\n{msg}"
+        msg = payload.get("message", "unknown error")
+        return f"❌ <b>[{bot}] Error</b>\n{msg}"
 
     return f"[{bot}] {alert_type}: {payload}"

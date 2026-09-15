@@ -8,8 +8,8 @@ class DALClient:
         self._url = base_url.rstrip("/")
 
     async def health(self) -> dict:
-        """Alleen om te zien of de dal antwoordt. Bij een verse installatie brengt
-        zijn initContainer eerst het schema aan, dus hij is er later dan wij."""
+        """Only checks whether the dal answers. On a fresh install its initContainer
+        applies the schema first, so it comes up later than we do."""
         async with httpx.AsyncClient() as c:
             r = await c.get(f"{self._url}/health", headers=_HEADERS, timeout=5)
             r.raise_for_status()

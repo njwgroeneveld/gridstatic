@@ -120,8 +120,8 @@ async def test_live_fill_check_keeps_watermark_when_fills_unreadable(live_grid, 
 
 @pytest.mark.asyncio
 async def test_process_buy_fill_still_sells_when_level_already_has_an_order(grid, dal):
-    """Twee verschillende koop-orders mogen allebei een level hoger uitstappen.
-    Die tweede verkoop overslaan liet de gekochte positie zonder uitgang achter."""
+    """Two different buy orders may both exit one level up. Skipping the second
+    sell left the bought position with no exit."""
     grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
     grid.grid_config_id = 1
     dal.get_open_orders.return_value = [
@@ -236,8 +236,8 @@ async def test_health_check_backfill_does_not_stack_across_cycles(grid, connecto
 
 @pytest.mark.asyncio
 async def test_process_sell_fill_reports_profit_net_of_fees(grid, dal):
-    """profit_usd is wat de rekening werkelijk verandert: bruto min de fee van
-    beide kanten. De koop-fee staat al op de trade, de verkoop-fee komt erbij."""
+    """profit_usd is what the account actually changes by: gross minus the fee on
+    both sides. The buy fee is already on the trade; the sell fee is added."""
     from src.strategy import MAKER_FEE_RATE
 
     grid.levels = [57000, 58222, 59444, 60666, 61888]
@@ -260,8 +260,8 @@ async def test_process_sell_fill_reports_profit_net_of_fees(grid, dal):
 
 @pytest.mark.asyncio
 async def test_process_buy_fill_live_takes_size_and_fee_from_fill(grid, dal, connector):
-    """Live rekent niets uit: de fill vertelt precies hoeveel er gekocht is en
-    wat het kostte, dus de SELL gaat met exact die hoeveelheid de markt in."""
+    """Live computes nothing: the fill says exactly how much was bought and what
+    it cost, so the SELL goes to market with exactly that size."""
     grid.shadow = False
     grid.levels = [57000, 58222, 59444, 60666, 61888]
     grid.grid_config_id = 1
@@ -278,8 +278,8 @@ async def test_process_buy_fill_live_takes_size_and_fee_from_fill(grid, dal, con
 
 @pytest.mark.asyncio
 async def test_process_buy_fill_shadow_sizes_position_by_leverage(grid, dal):
-    """Shadow heeft geen fill en moet dus modelleren -- inclusief de hefboom,
-    anders simuleert hij een kleinere positie dan live zou nemen."""
+    """Shadow has no fill and has to model one -- including leverage, otherwise it
+    simulates a smaller position than live would take."""
     grid.config["leverage"] = 3
     grid.levels = [57000, 58222, 59444, 60666, 61888]
     grid.grid_config_id = 1
@@ -293,9 +293,9 @@ async def test_process_buy_fill_shadow_sizes_position_by_leverage(grid, dal):
 
 
 @pytest.mark.asyncio
-async def test_partiele_fills_groeien_een_trade_in_plaats_van_er_meer_te_maken(grid, dal, connector):
-    """Een limit-order kan in stukjes vullen. Elk stukje een eigen trade geven gaf
-    posities zonder verkooporder; nu groeit er precies een trade mee."""
+async def test_partial_fills_grow_one_trade_instead_of_creating_more(grid, dal, connector):
+    """A limit order can fill in pieces. Giving every piece its own trade left
+    positions without a sell order; now exactly one trade grows with them."""
     grid.shadow = False
     grid.levels = [57000, 58222, 59444, 60666, 61888]
     grid.grid_config_id = 1
@@ -311,7 +311,7 @@ async def test_partiele_fills_groeien_een_trade_in_plaats_van_er_meer_te_maken(g
     assert dal.insert_grid_trade.call_count == 1
     assert connector.place_sell_limit.call_args[0][1] == 0.02
 
-    # tweede stukje van dezelfde order
+    # second piece of the same order
     dal.get_open_trades.return_value = [
         {"id": 500, "buy_order_id": 10, "buy_price": 60666.0,
          "size_usd": 404.44, "fee_usd": 0.5, "sell_order_id": 77},
@@ -322,19 +322,19 @@ async def test_partiele_fills_groeien_een_trade_in_plaats_van_er_meer_te_maken(g
     ]
     await grid._process_buy_fill(order, 60666.0, fill={"sz": "0.01", "px": "60666.0", "fee": "0.25"})
 
-    # geen tweede trade, wel een grotere verkoop, en de oude is ingetrokken
+    # no second trade, but a larger sell, and the old one was cancelled
     assert dal.insert_grid_trade.call_count == 1
     connector.cancel_order.assert_awaited_with("BTC", "999")
     assert connector.place_sell_limit.call_args[0][1] == 0.03
 
-    gepatcht = dal.patch_trade.call_args_list[-2].args[1]
-    assert gepatcht["fee_usd"] == 0.75
+    patched = dal.patch_trade.call_args_list[-2].args[1]
+    assert patched["fee_usd"] == 0.75
 
 
 @pytest.mark.asyncio
-async def test_record_funding_slaat_nieuwe_records_op(grid, dal, connector):
-    """Funding komt van de exchange, niet uit een formule: het tarief wisselt per
-    uur en kan van teken draaien, dus modelleren zou het verkeerde teken geven."""
+async def test_record_funding_stores_new_records(grid, dal, connector):
+    """Funding comes from the exchange, not from a formula: the rate changes every
+    hour and can flip sign, so modelling it would get the sign wrong."""
     grid.shadow = False
     grid.grid_config_id = 15
     dal.get_last_funding_ms.return_value = 1_000_000
@@ -350,16 +350,16 @@ async def test_record_funding_slaat_nieuwe_records_op(grid, dal, connector):
     await grid._record_funding()
 
     connector.get_funding.assert_awaited_with(1_000_001)
-    opgeslagen = [c.args[0] for c in dal.insert_grid_funding.call_args_list]
-    assert len(opgeslagen) == 2          # de ETH-regel hoort niet bij dit grid
-    assert opgeslagen[0]["usdc"] == -0.0031
-    assert opgeslagen[1]["usdc"] == 0.0226
-    assert all(r["grid_config_id"] == 15 and r["shadow"] is False for r in opgeslagen)
+    stored = [c.args[0] for c in dal.insert_grid_funding.call_args_list]
+    assert len(stored) == 2          # the ETH record does not belong to this grid
+    assert stored[0]["usdc"] == -0.0031
+    assert stored[1]["usdc"] == 0.0226
+    assert all(r["grid_config_id"] == 15 and r["shadow"] is False for r in stored)
 
 
 @pytest.mark.asyncio
-async def test_record_funding_doet_niets_in_shadow(grid, dal, connector):
-    """Een shadow-grid houdt geen positie aan, dus er valt geen funding op te halen."""
+async def test_record_funding_does_nothing_in_shadow(grid, dal, connector):
+    """A shadow grid holds no position, so there is no funding to fetch."""
     grid.shadow = True
 
     await grid._record_funding()
@@ -369,19 +369,19 @@ async def test_record_funding_doet_niets_in_shadow(grid, dal, connector):
 
 
 @pytest.mark.asyncio
-async def test_live_sizing_gebruikt_vast_startkapitaal_niet_de_accountwaarde(grid, dal, connector):
-    """De accountwaarde beweegt met ongerealiseerde winst mee, dus daarop sturen
-    laat lijnen krimpen precies terwijl het grid zich naar beneden inkoopt. Vast
-    startkapitaal plus gerealiseerde winst houdt de lijnen stabiel -- en gelijk
-    aan hoe shadow rekent, zodat de twee vergelijkbaar blijven."""
+async def test_live_sizing_uses_fixed_start_capital_not_account_value(grid, dal, connector):
+    """Account value moves with unrealised P&L, so sizing on it shrinks the lines
+    exactly while the grid is buying its way down. Fixed start capital plus realised
+    profit keeps the lines stable -- and matches how shadow sizes, so the two stay
+    comparable."""
     grid.shadow = False
     grid.grid_config_id = 1
     grid.start_balance = 464.0
-    connector.get_account_value.return_value = 50.0  # zou lijnen 9x kleiner maken
+    connector.get_account_value.return_value = 50.0  # would make lines 9x smaller
     dal.get_closed_trades.return_value = [{"profit_usd": 16.0}]
 
     size = await grid._current_size_usd()
 
     connector.get_account_value.assert_not_awaited()
-    # (464 + 16) * 80% / 10 lijnen
+    # (464 + 16) * 80% / 10 lines
     assert size == 38.4

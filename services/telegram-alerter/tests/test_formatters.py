@@ -42,22 +42,22 @@ def test_outside_grid():
     assert "🚨" in msg
 
 
-def test_funding_regel_staat_naast_de_winst_niet_erin():
-    """Funding wordt per uur over de netto positie afgerekend en is niet aan een
-    losse trade toe te rekenen, dus het hoort niet in profit_usd te verdwijnen.
-    De regel toont het apart en zet er het echte nettoresultaat naast."""
-    from src.main import _funding_regel
+def test_funding_line_sits_next_to_profit_not_inside_it():
+    """Funding is charged hourly on the net position and cannot be attributed to a
+    single trade, so it must not disappear into profit_usd. The line shows it
+    separately, with the real net result next to it."""
+    from src.main import _funding_line
 
-    regel = _funding_regel({15: -1.74}, 15, realized=3.46)
+    line = _funding_line({15: -1.74}, 15, realized=3.46)
 
-    assert "Funding: -1.74$" in regel
-    assert "Netto: +1.72$" in regel
+    assert "Funding: -1.74$" in line
+    assert "Net: +1.72$" in line
 
 
-def test_geen_funding_regel_zonder_funding():
-    """Shadow-grids houden geen positie aan waarover funding wordt gerekend, dus
-    daar hoort de regel helemaal niet te verschijnen."""
-    from src.main import _funding_regel
+def test_no_funding_line_without_funding():
+    """Shadow grids hold no position that funding is charged on, so the line must not
+    appear there at all."""
+    from src.main import _funding_line
 
-    assert _funding_regel({}, 4, realized=1.78) == ""
-    assert _funding_regel({4: 0.0}, 4, realized=1.78) == ""
+    assert _funding_line({}, 4, realized=1.78) == ""
+    assert _funding_line({4: 0.0}, 4, realized=1.78) == ""

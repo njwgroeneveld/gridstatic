@@ -36,7 +36,7 @@ def test_post_alert_buy_placed_returns_ok():
     mock_send.assert_called_once()
     text = mock_send.call_args[0][0]
     assert "BTC" in text
-    assert "BUY limit gezet" in text
+    assert "BUY limit placed" in text
 
 
 def test_post_alert_unknown_type_uses_fallback():
@@ -89,9 +89,9 @@ def test_send_telegram_no_credentials_no_crash():
 
 
 def test_handle_status_queries_only_static():
-    # Deze stack kent alleen de static grid. /status hoort dus precies één
-    # strategie op te vragen; vroeg hij ook TRAILING op, dan rapporteert hij over
-    # grids die hier niet bestaan.
+    # This stack only has the static grid, so /status must ask for exactly one
+    # strategy; if it also asked for TRAILING it would report on grids that do not
+    # exist here.
     import src.main as m
 
     def fake_get(url, params=None, timeout=None):

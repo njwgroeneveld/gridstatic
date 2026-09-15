@@ -45,9 +45,9 @@ def _ex() -> ExchangeClient:
     try:
         _exchange = ExchangeClient(_PRIVATE_KEY, _WALLET_ADDRESS, _TESTNET)
     except Exception as e:
-        log.error(f"ExchangeClient opbouwen mislukt: {e}")
-        raise HTTPException(status_code=503, detail=f"exchange niet bereikbaar: {e}")
-    log.info("ExchangeClient opgebouwd")
+        log.error(f"building ExchangeClient failed: {e}")
+        raise HTTPException(status_code=503, detail=f"exchange unreachable: {e}")
+    log.info("ExchangeClient built")
     return _exchange
 
 
@@ -145,7 +145,7 @@ def get_meta(coin: str):
 def place_limit(req: LimitOrderReq):
     result = _ex().place_limit_order(req.coin, req.direction, req.price, req.size_usd, req.leverage)
     if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reden"))
+        raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 
 
@@ -153,7 +153,7 @@ def place_limit(req: LimitOrderReq):
 def place_tp(req: TpOrderReq):
     result = _ex().place_tp_limit_order(req.coin, req.direction, req.sz_coin, req.limit_price)
     if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reden"))
+        raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 
 
@@ -161,7 +161,7 @@ def place_tp(req: TpOrderReq):
 def place_sl(req: SlOrderReq):
     result = _ex().place_sl_trigger_order(req.coin, req.direction, req.sz_coin, req.trigger_price)
     if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reden"))
+        raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 
 
@@ -169,7 +169,7 @@ def place_sl(req: SlOrderReq):
 def cancel_order(coin: str, oid: str):
     result = _ex().cancel_order(coin, oid)
     if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reden"))
+        raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 
 
@@ -177,7 +177,7 @@ def cancel_order(coin: str, oid: str):
 def close_position(coin: str, req: ClosePositionReq):
     result = _ex().close_position_market(coin, req.direction, req.size_usd, req.entry_price)
     if result["status"] not in ("ok", "not_found"):
-        raise HTTPException(status_code=502, detail=result.get("reden"))
+        raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 
 
