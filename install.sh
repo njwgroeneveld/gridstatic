@@ -173,16 +173,20 @@ fi
 step "Secret $DB_SECRET"
 
 create_secret() {
-  # Through apply, so running again does not fail with "already exists". The value
-  # travels over a pipe and never appears in the process table.
+  # Through apply, so running again does not fail with "already exists".
+  #
+  # The value never becomes a command-line argument: printf is a shell builtin, not
+  # a process, and base64 reads it from stdin, so it does not show up in ps. Encoding
+  # it also means a password containing quotes or backslashes cannot break the YAML.
   if [ "$DRY_RUN" = 1 ]; then
-    printf '       would run: kubectl -n %s create secret generic %s --from-literal=url=<hidden> | kubectl apply -f -\n' \
+    printf '       would run: kubectl apply -f - (Secret %s/%s, url=<hidden>)\n' \
       "$NAMESPACE" "$DB_SECRET"
     return
   fi
-  kubectl -n "$NAMESPACE" create secret generic "$DB_SECRET" \
-    --from-literal=url="$DB_URL" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  local encoded
+  encoded="$(printf '%s' "$DB_URL" | base64 | tr -d '\n')"
+  printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  url: %s\n' \
+    "$DB_SECRET" "$NAMESPACE" "$encoded" | kubectl apply -f - >/dev/null
 }
 if [ "$REUSE_SECRET" = 1 ]; then
   ok "left unchanged"
