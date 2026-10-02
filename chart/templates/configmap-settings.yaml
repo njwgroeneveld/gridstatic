@@ -32,6 +32,9 @@ data:
         lower: {{ $c.lower }}
         num_lines: {{ $c.numLines }}
         leverage: {{ $c.leverage }}
+        {{- if $c.startBalance }}
+        start_balance: {{ $c.startBalance }}
+        {{- end }}
     {{- end }}
 
     round_interval_seconds: {{ .Values.grid.roundIntervalSeconds }}

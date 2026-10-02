@@ -275,6 +275,16 @@ market if all 19 cells fill. The size does not grow with profit: the profit sinc
 not something the exchange can report once its fill history rolls over, and the bot keeps no
 record of its own.
 
+A grid can set its own `startBalance`, which then overrides the global one for that grid. That
+fits grids that margin from different balances — BTC from your regular perps account, a HIP-3
+market from its own dex:
+
+```yaml
+    NDX-20:
+      coin: "xyz:XYZ100"
+      startBalance: 500            # this grid only; the others keep grid.startBalance
+```
+
 `startBalance` is not read from your account. The bot deliberately does not size from your
 account value: that value moves with unrealised losses, so lines would shrink exactly while the
 grid is buying its way down. At startup it compares what a full grid needs with your account
