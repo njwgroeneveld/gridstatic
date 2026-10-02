@@ -1,17 +1,17 @@
 # gridstatic
 
-A static grid trading bot for [Hyperliquid](https://hyperliquid.xyz), built as four small
-services on Kubernetes and installed with a single command.
+A static grid trading bot for [Hyperliquid](https://hyperliquid.xyz), built as three small
+services on Kubernetes and installed with a single command. It keeps no database: every round
+it reads the exchange and repairs the difference with the grid you configured.
 
 [![grid-static](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-grid-static.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-grid-static.yml)
-[![dal](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-dal.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-dal.yml)
 [![connector](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-connector.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-connector.yml)
 [![telegram-alerter](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-telegram-alerter.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-telegram-alerter.yml)
 [![chart](https://github.com/njwgroeneveld/gridstatic/actions/workflows/publish-chart.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/publish-chart.yml)
 
 > **Disclaimer.** This is a personal project, not financial advice. Trading with leverage can
-> lose more than you put in. Everything runs in shadow mode by default; start there, then use
-> Hyperliquid's testnet before you ever point it at real funds.
+> lose more than you put in. Everything runs on Hyperliquid's **testnet** by default; run it there
+> until you trust it before you ever point it at real funds.
 
 ---
 
@@ -23,12 +23,13 @@ services on Kubernetes and installed with a single command.
 - [Quick start](#quick-start)
 - [Manual installation](#manual-installation)
 - [Configuration](#configuration)
-- [Shadow mode: what it simulates](#shadow-mode-what-it-simulates)
-- [Going live](#going-live)
+- [When the grid holds](#when-the-grid-holds)
+- [Going to mainnet](#going-to-mainnet)
 - [Checking a running grid](#checking-a-running-grid)
 - [Telegram alerts (optional)](#telegram-alerts-optional)
 - [Security](#security)
 - [Uninstalling](#uninstalling)
+- [Upgrading from 0.3](#upgrading-from-03)
 - [Development](#development)
 - [Design decisions](#design-decisions)
 
@@ -37,29 +38,32 @@ services on Kubernetes and installed with a single command.
 ## How it works
 
 You choose a price range and a number of lines. The bot divides the range into evenly spaced
-grid lines and places a **buy** limit order on every line below the current price.
+lines. Each pair of neighbouring lines is a **cell**: buy on the lower line, sell on the upper.
 
 ```
  83,000 ─────────────────────────  line 19
     ...
- 77,526 ─────────────────────────  line 6    ← sell, one line above a filled buy
- 77,105 ─────────────────────────  line 5    ← filled buy
+ 77,526 ─────────────────────────  line 6    ← sell of cell 5
+ 77,105 ─────────────────────────  line 5    ← cell 5 bought here
  77,075 ════════ price ══════════
- 76,684 ─────────────────────────  line 4    ← resting buy
+ 76,684 ─────────────────────────  line 4    ← resting buy of cell 4
     ...
- 75,000 ─────────────────────────  line 0    ← resting buy
+ 75,000 ─────────────────────────  line 0    ← resting buy of cell 0
 ```
 
-- When a buy fills, a **sell** goes up one line higher.
-- When that sell fills, the round trip is closed and the buy returns on its line.
-- Every closed round trip earns the distance between two lines, minus fees.
+- Every empty cell below the price gets a **buy**.
+- When a buy fills, its cell gets a **sell** one line up.
+- When that sell fills, the cell is empty again and gets its buy back.
+- Every completed cycle earns the distance between two lines, minus fees.
 
 A grid does well when the price moves back and forth inside the range. It does badly when the
-price leaves the range and stays out: below the range you hold every position bought on the
-way down; above it, nothing is left to sell.
+price leaves the range and stays out: below the range you hold every position bought on the way
+down; above it, nothing is left to sell.
 
-**Everything runs in shadow mode by default** — a simulation with its own bookkeeping that
-never sends an order to the exchange. Going live takes two separate, deliberate steps.
+**The exchange is the bot's only memory.** Every order carries its cell in its client order id,
+so after a restart — or a crash at any moment — the next round reads the book and knows exactly
+where it stands. Before it places a single new buy, it checks that every coin of the position is
+accounted for by its own orders; if not, it [holds](#when-the-grid-holds).
 
 ---
 
@@ -69,28 +73,23 @@ never sends an order to the exchange. Going live takes two separate, deliberate 
 flowchart LR
     subgraph cluster[Kubernetes namespace]
         GS[grid-static<br/><i>the strategy</i>]
-        DAL[dal<br/><i>database access</i>]
         CON[connector<br/><i>exchange access</i>]
         TG[telegram-alerter<br/><i>optional</i>]
     end
-    DB[(PostgreSQL<br/>e.g. Supabase)]
     HL[Hyperliquid API]
     TGAPI[Telegram]
 
-    GS -- orders, trades --> DAL
-    GS -- prices, orders, fills --> CON
+    GS -- orders, position, fills --> CON
     GS -- alerts --> TG
-    DAL --> DB
     CON --> HL
-    TG -- /status --> DAL
+    TG -- /status --> GS
     TG --> TGAPI
 ```
 
 | service | responsibility |
 |---|---|
-| **grid-static** | The strategy. Builds the grid, detects fills, places the follow-up orders, and runs a health loop that refills empty lines below the price. |
-| **dal** | The only service that talks to the database. Also applies the schema on startup. |
-| **connector** | The only service that talks to Hyperliquid. Holds the private key; without one it still serves prices. |
+| **grid-static** | The strategy. Every round: read the exchange, decide, place and cancel orders, report. Serves `/status`. |
+| **connector** | The only service that talks to Hyperliquid. Holds the private key. |
 | **telegram-alerter** | Optional. Sends alerts and answers a `/status` command. |
 
 Every service is a small FastAPI app with its own image (amd64 and arm64) and its own test
@@ -105,33 +104,28 @@ suite. They talk to each other over ClusterIP; nothing is exposed outside the cl
 | A Kubernetes cluster | k3s, minikube, kubeadm — any of them |
 | `kubectl` with access to it | the installation runs from your machine |
 | `helm` 3 | `brew install helm`, `winget install Helm.Helm`, or the [install script](https://helm.sh/docs/intro/install/) |
-| A PostgreSQL database | the easiest is a free [Supabase](https://supabase.com) project |
-| Outbound internet from the cluster | to Hyperliquid, to your database, and to ghcr.io for the images |
+| A Hyperliquid testnet account | [app.hyperliquid-testnet.xyz](https://app.hyperliquid-testnet.xyz), with test USDC from its faucet |
+| Outbound internet from the cluster | to Hyperliquid, and to ghcr.io for the images |
 
-You do **not** need a StorageClass (the stack has no volumes), an ingress, cert-manager or a
-service mesh.
+You do **not** need a database, a StorageClass (the stack has no volumes), an ingress,
+cert-manager or a service mesh.
 
-### The database connection
+### Give the bot an account of its own
 
-In your Supabase dashboard, open **Connect** and copy the **session pooler** string:
+Use a fresh account or a subaccount, and trade nothing else on it. Every round the bot checks
+that the position adds up to its own orders. A position you opened by hand, or another bot on the
+same coin, makes it hold — correctly, because it can no longer tell what is its own.
 
-```
-postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
-```
+### Which key
 
-| connection | port | |
+| setup | `private_key` | `wallet_address` |
 |---|---|---|
-| **Session pooler** | 5432 | what you want: reachable over IPv4, meant for long-lived connections |
-| Transaction pooler | 6543 | works too, but is meant for short-lived connections |
-| Direct (`db.<ref>.supabase.co`) | 5432 | **IPv6 only** — does not work from an IPv4 cluster |
+| the account itself | that account's key | empty |
+| a subaccount | the **main** account's key | the subaccount's address |
 
-> **Never point two gridstatic stacks at the same database.** The bot recognises its grids by
-> their settings. A second stack would find the first one's grids, treat them as its own and
-> place duplicate orders. A Kubernetes namespace does not prevent this: it separates pods, not
-> database rows.
-
-You do not need to create any tables. The dal applies an idempotent schema (`db/schema.sql`)
-every time it starts.
+**API wallets are not supported yet.** An API wallet trades on behalf of another account, and
+the connector would read the API wallet's own, empty account instead of the one it trades for.
+The bot detects this — none of its orders ever show up — and holds, but it cannot trade.
 
 ---
 
@@ -142,26 +136,30 @@ curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/in
 bash install.sh
 ```
 
-The script asks one question — your connection string, with hidden input — and then:
+The script asks for your testnet key (hidden input) and an optional subaccount, and then:
 
 1. checks that `kubectl`, `helm` and your cluster are available
 2. creates the `gridstatic` namespace
-3. stores the connection string in a Kubernetes Secret
-4. writes `gridstatic-values.yaml` with a default BTC grid in shadow mode
+3. stores the key in a Kubernetes Secret
+4. writes `gridstatic-values.yaml` with a default BTC grid on testnet
 5. installs the Helm chart
-6. **verifies the result**: the schema was applied, all pods run, the bot built its grid, and
-   the fill loop runs without errors
+6. **verifies the result**: all pods run, the bot started its grid, and its first rounds run
+   without errors — or tells you it is on hold, and why
 
 You end with a single verdict: done, or what went wrong and where to look.
+
+> **Check the bounds.** The default grid runs from 75,000 to 83,000. Testnet prices drift from
+> mainnet; if the testnet price is outside that range, edit `gridstatic-values.yaml` and upgrade
+> (see [Changing a running grid](#changing-a-running-grid)).
 
 | option | |
 |---|---|
 | `--dry-run` | show every step without touching anything |
 | `--namespace`, `--release`, `--chart` | override the defaults |
-| `GRIDSTATIC_DB_URL` | skip the question (useful in automation) |
+| `GRIDSTATIC_HL_KEY`, `GRIDSTATIC_HL_WALLET` | skip the questions (useful in automation) |
 
-The connection string deliberately has no command-line flag: it would end up in your shell
-history. Re-running the script is safe; it reuses the Secret and upgrades the release.
+The key deliberately has no command-line flag: it would end up in your shell history. Re-running
+the script is safe; it reuses the Secret and upgrades the release.
 
 ---
 
@@ -175,36 +173,37 @@ The same steps by hand, if you prefer to see each one.
 kubectl create namespace gridstatic
 ```
 
-**2. The database secret**
+**2. The Hyperliquid secret**
 
-This chart contains no passwords and creates no Secrets — you create them and pass only their
-names (see [Security](#security) for why).
+This chart contains no keys and creates no Secrets — you create them and pass only their names
+(see [Security](#security) for why).
 
 ```bash
-read -rsp 'Connection string: ' DB_URL; echo
+read -rsp 'Private key: ' HL_KEY; echo
+read -rp  'Subaccount address (empty for none): ' HL_WALLET
 kubectl -n gridstatic apply -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
-  name: gridstatic-db
+  name: gridstatic-hyperliquid
 type: Opaque
 data:
-  url: $(printf '%s' "$DB_URL" | base64 | tr -d '
-')
+  private_key: $(printf '%s' "$HL_KEY" | base64 | tr -d '\n')
+  wallet_address: "$(printf '%s' "$HL_WALLET" | base64 | tr -d '\n')"
 EOF
-unset DB_URL
+unset HL_KEY HL_WALLET
 ```
 
-This looks more roundabout than `kubectl create secret --from-literal=url=...`, on purpose. With
-`--from-literal` the value lands in your shell history and in the process list. Here it is read
-with hidden input, handed to `base64` over a pipe, and sent to `kubectl` over stdin. Encoding it
-also keeps a password with quotes or backslashes from breaking the YAML.
+This looks more roundabout than `kubectl create secret --from-literal=...`, on purpose. With
+`--from-literal` the key lands in your shell history and in the process list. Here it is read
+with hidden input, handed to `base64` over a pipe, and sent to `kubectl` over stdin.
 
 **3. Values** — create `gridstatic-values.yaml`:
 
 ```yaml
-database:
-  existingSecret: gridstatic-db
+hyperliquid:
+  testnet: true
+  existingSecret: gridstatic-hyperliquid
 
 grid:
   startBalance: 1000
@@ -212,7 +211,6 @@ grid:
     BTC-20:
       coin: BTC
       active: true
-      shadow: true
       allocationPct: 100
       upper: 83000
       lower: 75000
@@ -230,17 +228,12 @@ helm install gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 **5. Check**
 
 ```bash
-kubectl -n gridstatic logs deploy/gridstatic-dal -c schema
 kubectl -n gridstatic logs deploy/gridstatic-grid-static -f
 ```
 
-The first command should show `CREATE TABLE` lines. If it keeps printing
-`waiting for the database...`, the cluster cannot reach your database — almost always the
-direct connection instead of the session pooler.
-
-The bot should log `Initialising grid` followed by `Grid ready — N BUY orders placed`. If it
-logs `Recovering state from DAL + exchange` on a database you just created, your connection
-string points at the wrong database.
+The bot should log `started: 20 lines 75000-83000, $40.0 per line, 1x`, followed by a `BUY` line
+for every cell below the price. If it logs `Refusing to start`, the message below it names the
+setting it will not trade with.
 
 ---
 
@@ -255,13 +248,12 @@ All settings live in your values file. The full list with comments is in
 grid:
   strategyAllocationPct: 80       # share of startBalance available to all grids
   startBalance: 1000              # basis for order sizing -- see below
-  fillsPollIntervalSeconds: 30    # how often fills are checked
-  healthCheckIntervalSeconds: 60  # how often empty lines are refilled
+  roundIntervalSeconds: 30        # how often the bot reads the exchange and repairs the grid
+  fillLookbackHours: 72           # how far back it looks for coin a cell bought but did not sell
   coins:
-    SOL-20:                       # free-form label, used in log lines only
+    SOL-20:                       # free-form label, used in logs and alerts
       coin: SOL                   # Hyperliquid symbol
       active: true
-      shadow: true                # false = real orders
       allocationPct: 100          # this grid's share of the strategy allocation
       lower: 93
       upper: 107
@@ -269,29 +261,37 @@ grid:
       leverage: 1
 ```
 
-**Order size per line** is:
+**Order size per line** is fixed:
 
 ```
 startBalance × strategyAllocationPct% × allocationPct% ÷ numLines
 ```
 
-With the defaults above, 1000 × 80% × 100% ÷ 20 = **$40 per line**, and up to $800 in the
-market if every line fills. Realised profit is added to `startBalance` as the grid trades.
+With the defaults above, 1000 × 80% × 100% ÷ 20 = **$40 per line**, and up to $760 in the
+market if all 19 cells fill. The size does not grow with profit: the profit since the start is
+not something the exchange can report once its fill history rolls over, and the bot keeps no
+record of its own.
 
-`startBalance` is the basis for sizing **in live mode too** — it is not a simulation budget. The
-bot deliberately does not size from your account value: that value moves with unrealised
-losses, so lines would shrink exactly while the grid is buying its way down. Set it to the amount
-you are willing to trust this stack with.
+`startBalance` is not read from your account. The bot deliberately does not size from your
+account value: that value moves with unrealised losses, so lines would shrink exactly while the
+grid is buying its way down. At startup it compares what a full grid needs with your account
+value and warns if the account cannot carry it.
 
-Hyperliquid rejects orders below **$10**, so keep the size per line comfortably above that.
+**The bot refuses to start** — with a message that names the problem — when:
+
+| | why |
+|---|---|
+| an order would be under $10 (leverage counts) | Hyperliquid rejects it, and the cell would stay empty |
+| two grids trade the same coin | the exchange keeps one position per coin; two grids cannot tell theirs apart |
+| a grid says `shadow: true` | shadow mode is gone; starting would place real orders for a grid you believe is simulated |
+| `startBalance` is missing | it sizes every order; there is no safe default |
 
 ### Other settings
 
 | key | default | |
 |---|---|---|
-| `database.existingSecret` | *(required)* | Secret with the key `url` |
-| `hyperliquid.testnet` | `true` | `false` means mainnet |
-| `hyperliquid.existingSecret` | empty | Secret with `private_key` and `wallet_address`; only needed to go live |
+| `hyperliquid.testnet` | `true` | `false` means mainnet and real money |
+| `hyperliquid.existingSecret` | *(required)* | Secret with `private_key` and `wallet_address` |
 | `telegram.enabled` | `false` | deploys the alerter |
 | `telegram.existingSecret` | empty | Secret with `bot_token` and `chat_id` |
 | `scheduling.nodeSelector`, `scheduling.tolerations` | empty | pin the pods if you need to |
@@ -307,121 +307,81 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
   -n gridstatic -f gridstatic-values.yaml
 ```
 
-> **Changing `coin`, `numLines`, `lower`, `upper` or `leverage` creates a new grid.** The bot
-> recognises its grid by exactly those five settings. Change one and it no longer finds the old
-> grid: it creates a new one and places a second layer of orders, while the old orders stay on
-> the exchange unmanaged. Cancel the old grid's orders first. Changing `shadow`,
-> `allocationPct` or `startBalance` is safe.
+> **Changing `coin`, `numLines`, `lower`, `upper` or `leverage` makes a new grid.** Every order
+> carries a fingerprint of exactly those five settings. After the change, the old grid's orders
+> carry a different fingerprint: the bot leaves them alone, but it also holds — its position no
+> longer adds up. Cancel the old orders and close or keep the old position deliberately before
+> you change them. Changing `allocationPct` or `startBalance` is safe; it applies to new orders.
 
 ---
 
-## Shadow mode: what it simulates
+## When the grid holds
 
-Shadow mode uses **real prices** — the connector reads them from Hyperliquid's public API, no
-key needed — but **simulated fills**. When the price crosses one of your lines, the order counts
-as filled at exactly that line's price.
+On hold, the bot places **no new buys**. It still places sells for coin it can account for, and
+it resumes by itself as soon as the cause is gone. You get a `grid_hold` alert with the reason,
+and a `hold_cleared` alert when it resumes. `/status` shows it too.
 
-That makes shadow results optimistic in three ways:
+| reason | what to do |
+|---|---|
+| the position has coin no cell accounts for | a manual position, another bot on the coin, or fills older than `fillLookbackHours`. Close the extra position, or sell it yourself. |
+| orders from an earlier grid on this coin | you changed the grid's bounds, lines or leverage. Cancel the old orders, or restore the old settings. |
+| resting sells exceed the position | someone sold coin the bot had a sell for. Cancel the excess sell. |
+| none of the orders placed last round is on the book or filled | the bot reads another account than it trades on. Check `wallet_address` — see [Which key](#which-key). |
+| short position | a grid only ever holds long. Close the short. |
 
-- **Fills are ideal.** Always the exact line price, instantly, in full. A real limit order waits
-  in a queue, so a price that touches your line and bounces may not fill it at all.
-- **Fees are modelled** at Hyperliquid's maker rate (0.015%), not read from real fills.
-- **Funding is ignored.** A shadow grid holds no position, so it pays no funding. With leverage
-  and a persistently positive funding rate, that overstates the result.
-
-Shadow tells you whether your lines are in the right place. It does not tell you your return.
+The rule behind it: a buy too few costs one missed cycle; a buy too many is how a grid once
+bought the same line eight times. See [`docs/design.md`](docs/design.md).
 
 ---
 
-## Going live
+## Going to mainnet
 
-Manual on purpose: it takes two steps, and neither does anything on its own.
+Manual on purpose. Run on testnet until the grid has done what you expect for long enough to
+trust it, then:
 
-### 1. Create a Hyperliquid secret
-
-Use a dedicated Hyperliquid API wallet with a limited balance, never your main account key.
-
-```bash
-read -rsp 'Private key: ' HL_KEY; echo
-kubectl -n gridstatic apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: gridstatic-hl
-type: Opaque
-data:
-  private_key: $(printf '%s' "$HL_KEY" | base64 | tr -d '
-')
-stringData:
-  wallet_address: "0xYOUR_WALLET_ADDRESS"
-EOF
-unset HL_KEY
-```
-
-The wallet address is public, so it can stay in plain text; the key goes through the same
-hidden-input-and-pipe route as the database connection.
-
-### 2. Switch a grid to live
-
-In `gridstatic-values.yaml`:
-
-```yaml
-hyperliquid:
-  testnet: true                  # false = mainnet, real money
-  existingSecret: gridstatic-hl
-
-grid:
-  coins:
-    SOL-20:
-      shadow: false              # this grid now places real orders
-```
-
-Then upgrade, and check that the log says `shadow=False`:
+1. Create a Secret with your **mainnet** key, the same way as the testnet one — a separate
+   account or subaccount with a balance you are willing to lose.
+2. In `gridstatic-values.yaml`, set `hyperliquid.testnet: false` and point
+   `hyperliquid.existingSecret` at the new Secret.
+3. Check the bounds against the mainnet price, and the size per line against your balance.
+4. Upgrade, and read the first rounds in the log:
 
 ```bash
 helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
   -n gridstatic -f gridstatic-values.yaml
-kubectl -n gridstatic logs deploy/gridstatic-grid-static --tail=40
+kubectl -n gridstatic logs deploy/gridstatic-grid-static -f
 ```
 
-Without the secret, the connector starts but answers 503 on every route that needs the account
-(orders, positions, fills). Without `shadow: false`, nothing trades even when the key is there.
-
-**Two things to know before you switch:**
-
-- **A grid that ran in shadow keeps its record.** The bot finds its grid by coin, lines, bounds
-  and leverage — not by the shadow flag. Switching an existing shadow grid to live continues in
-  the same record, mixing simulated and real trades. Give the live grid different bounds or a
-  different number of lines to keep them apart.
-- **Leave room for the minimum order size and your margin.** Other positions on the same account
-  share its margin; an order that does not fit is rejected and its line stays empty.
-
-To go back to shadow, set `shadow: true` and upgrade again. Resting orders on the exchange are
-not cancelled automatically when you do.
+The testnet orders stay on testnet; nothing carries over.
 
 ---
 
 ## Checking a running grid
 
-`tools/gridcheck.py` compares the bot's bookkeeping with the exchange and with the rules the
-design depends on. It only reads; it changes nothing.
+**What the bot sees** — every cell, the position, and whether it holds:
 
 ```bash
-python3 tools/gridcheck.py SOL
+kubectl -n gridstatic port-forward svc/gridstatic-grid-static 8080:8080
+curl -s localhost:8080/status
+```
+
+**An independent check** — `tools/gridcheck.py` reads your grid settings from the cluster and
+your account straight from Hyperliquid's public API: no key, no connector, nothing changed.
+
+```bash
+pip install pyyaml
+python3 tools/gridcheck.py --address 0xTHE_ACCOUNT_THE_BOT_TRADES_ON
 ```
 
 | check | what it catches |
 |---|---|
-| exactly one live config per coin | a restart that failed to recognise its grid |
-| at most one resting buy and one open position per line, never both | duplicate buys on the same line |
-| open orders identical on exchange and in the database | orphaned or lost orders |
-| exchange position equals the sum of open trades | a fill that was missed or double-counted |
-| every exchange fill processed; every filled order backed by a real fill | the fill loop falling behind |
-| no taker fills | orders crossing the book instead of resting |
-| fees booked match fees charged | fee accounting drift |
-| errors in the log; the same line refilled twice in a row | the refill loop stacking orders |
+| no orders from an earlier grid | a settings change that left orders behind |
+| at most one buy and one sell per cell | duplicate orders |
+| every sell is reduce-only, no buy at or above the price | orders that could open a short or cross the book |
+| the position adds up to the bot's own orders | anything that would make the bot hold |
+| what the next round would place or cancel | a grid that is not complete when it should be |
 
-It needs `kubectl` access to the namespace and Python 3.
+It needs `kubectl` access to the namespace (or `--settings settings.yaml`) and Python 3.
 
 ---
 
@@ -440,8 +400,7 @@ metadata:
   name: gridstatic-telegram
 type: Opaque
 data:
-  bot_token: $(printf '%s' "$TG_TOKEN" | base64 | tr -d '
-')
+  bot_token: $(printf '%s' "$TG_TOKEN" | base64 | tr -d '\n')
 stringData:
   chat_id: "YOUR_CHAT_ID"
 EOF
@@ -454,28 +413,29 @@ telegram:
   existingSecret: gridstatic-telegram
 ```
 
-You get alerts when a grid is built, a buy fills, a trade closes, the price nears or leaves the
-range, and when something fails — plus a `/status` command with a line-by-line view of every
-grid. With Telegram disabled, alerts fail silently and the bot keeps running.
+You get alerts when a buy fills, a cycle closes (with its profit after fees), the grid goes on or
+off hold, the price nears or leaves the range, and when something fails — plus a `/status`
+command with a cell-by-cell view of every grid. With Telegram disabled, alerts fail silently and
+the bot keeps running.
 
 ---
 
 ## Security
 
-**What this setup does.** Your database password and exchange key never pass through Helm.
-That matters: Helm stores the values you install with in a Secret in your cluster
-(`sh.helm.release.v1.<name>.v1`), and `helm get values` prints them back to anyone allowed to run
-it. Secrets are read with hidden input and sent to `kubectl` over stdin, so they never reach your
-shell history or the process list.
-CI fails if the chart ever renders a Secret, or if `install.sh --dry-run` prints a password.
+**What this setup does.** Your exchange key never passes through Helm. That matters: Helm stores
+the values you install with in a Secret in your cluster (`sh.helm.release.v1.<name>.v1`), and
+`helm get values` prints them back to anyone allowed to run it. Secrets are read with hidden
+input and sent to `kubectl` over stdin, so they never reach your shell history or the process
+list. CI fails if the chart ever renders a Secret, or if `install.sh --dry-run` prints the key.
 
-**What it does not do.** Kubernetes Secrets are base64-encoded, not encrypted. Without
-encryption at rest on etcd they are readable on your control-plane node's disk, and anyone with
-`get secrets` in the namespace can read them. For more, look at sealed-secrets,
-external-secrets or SOPS.
+Sells are always placed **reduce-only**: whatever the bot believes, a sell can never open a short.
 
-Use a dedicated Hyperliquid API wallet with a limited balance. The connector never needs your
-main account key.
+**What it does not do.** Kubernetes Secrets are base64-encoded, not encrypted. Without encryption
+at rest on etcd they are readable on your control-plane node's disk, and anyone with `get
+secrets` in the namespace can read them. For more, look at sealed-secrets, external-secrets or
+SOPS.
+
+The key in the Secret can withdraw funds. Keep only what the grid needs on that account.
 
 ---
 
@@ -486,29 +446,42 @@ helm uninstall gridstatic -n gridstatic
 kubectl delete namespace gridstatic
 ```
 
-If a grid was live, cancel its orders and close its position on Hyperliquid first — uninstalling
-stops the bot, not the orders it placed. Your data stays in your database.
+Uninstalling stops the bot, not the orders it placed: cancel them and close the position on
+Hyperliquid yourself. Installing again with the same grid settings picks the grid up where it
+was — the orders still carry its fingerprint.
+
+---
+
+## Upgrading from 0.3
+
+0.4 removes the database and shadow mode.
+
+- **Shadow grids** never placed orders, so there is nothing to carry over: uninstall 0.3, create
+  a testnet key Secret, remove `database` and every `shadow` from your values file, and install
+  0.4. The chart refuses a grid that still says `shadow: true`.
+- **Live grids** placed their orders without a cloid, so 0.4 does not recognise them. With a
+  position open it holds; with only resting buys it places its own buys next to them. Either
+  way: cancel the 0.3 orders and close the position before you upgrade.
+- The database and its Secret are no longer used; delete them when you no longer need the history.
 
 ---
 
 ## Development
 
 ```
-services/grid-static/        the strategy
-services/dal/                database access, schema applied on startup
+services/grid-static/        the strategy -- src/reconcile.py decides, src/strategy.py acts
 services/connector/          Hyperliquid access
 services/telegram-alerter/   alerts and /status
-db/schema.sql                the database schema (source of truth)
-chart/                       the Helm chart; chart/files/schema.sql is a checked copy
-tools/gridcheck.py           read-only consistency check for a running grid
+chart/                       the Helm chart
+tools/gridcheck.py           read-only check of a grid against the exchange
 install.sh                   one-command installer
 docs/design.md               design decisions and the incidents behind them
 ```
 
-Run the tests (91 in total):
+Run the tests (159 in total):
 
 ```bash
-for s in grid-static dal connector telegram-alerter; do
+for s in grid-static connector telegram-alerter; do
   PYTHONPATH="$PWD/services/$s" python -m pytest "services/$s/tests/" -q
 done
 ```
@@ -520,16 +493,16 @@ shellcheck install.sh
 ```
 
 **CI.** Each service has a workflow that runs its tests and builds a multi-arch image when its
-directory changes. The chart workflow lints and renders the chart and enforces three rules:
-installing without `database.existingSecret` must fail, the default values may never contain
-`shadow: false`, and the chart may never render a Secret. A separate workflow runs `shellcheck`
-and a dry run of `install.sh` that fails if a password shows up in the output.
+directory changes. The chart workflow lints and renders the chart and enforces its rules, each
+checked for the right reason: installing without `hyperliquid.existingSecret` fails, a grid with
+`shadow: true` fails, testnet is the default, nothing refers to a database, and the chart never
+renders a Secret. A separate workflow runs `shellcheck` and dry runs of `install.sh` that fail if
+the key shows up in the output or an invalid key is accepted.
 
 ---
 
 ## Design decisions
 
-[`docs/design.md`](docs/design.md) explains the choices behind this setup — why a grid line is
-identified by its number and not its price, why the database stores money as `numeric` and the
-dal converts it back, why secrets bypass Helm, why the schema is applied by an initContainer
-instead of a Helm hook — and the production incidents that led to several of them.
+[`docs/design.md`](docs/design.md) explains the choices behind this setup — why the exchange is
+the only source of truth, how a cell is recognised through the client order id, when and why the
+grid holds, why secrets bypass Helm — and the production incidents that led to several of them.

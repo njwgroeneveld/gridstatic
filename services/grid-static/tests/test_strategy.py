@@ -314,3 +314,16 @@ async def test_orders_that_filled_did_not_vanish(grid, connector):
                                         for i in range(6)]
     plan = await grid.run_round()
     assert plan.hold is None or "account" not in plan.hold
+
+
+async def test_an_exchange_that_stays_unreadable_is_alerted_once(grid, connector, alerter):
+    # One failed read is noise; a node that lost its network for minutes is not.
+    await grid.start()
+    connector.get_open_orders.side_effect = ConnectionError("down")
+    for _ in range(2):
+        await grid.run_round()
+    assert "error" not in _alert_types(alerter)
+    for _ in range(5):
+        await grid.run_round()
+    errors = [c.args[1]["message"] for c in alerter.send_alert.call_args_list if c.args[0] == "error"]
+    assert len(errors) == 1 and "unreadable" in errors[0]

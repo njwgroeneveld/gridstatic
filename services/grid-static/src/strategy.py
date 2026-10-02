@@ -23,6 +23,7 @@ MIN_NOTIONAL = 10.0                 # Hyperliquid refuses orders below $10
 _LOOKUPS_PER_ROUND = 50             # order-status calls to tie fills to cells
 _REPEAT_MS = 60 * 60 * 1000         # a standing hold or notice is repeated hourly
 _DAY_MS = 24 * 60 * 60 * 1000
+_UNREADABLE_ALERT_AFTER = 3          # failed rounds in a row before an alert
 
 
 class StaticGrid:
@@ -52,6 +53,7 @@ class StaticGrid:
         self._hold: str | None = None
         self._hold_alerted_ms = 0
         self._notice_alerted_ms: dict[str, int] = {}
+        self._failed_reads = 0
         self._outside = OutsideGridThrottle()
         self._edge = OutsideGridThrottle()
 
@@ -153,7 +155,14 @@ class StaticGrid:
             # nothing until it answers again.
             log.error(f"[{self.coin_key}] round skipped, exchange unreadable: {e}")
             metrics.grid_errors_total.labels(type="read").inc()
+            self._failed_reads += 1
+            if self._failed_reads >= _UNREADABLE_ALERT_AFTER:
+                await self._notice(f"{self.coin_key}: exchange unreadable for "
+                                   f"{self._failed_reads} rounds in a row -- the grid does "
+                                   f"nothing until it answers again. Last error: {e}",
+                                   key="unreadable")
             return None
+        self._failed_reads = 0
 
         position = float((positions.get(self.coin) or {}).get("szi", 0.0))
         for o in orders:
@@ -246,9 +255,7 @@ class StaticGrid:
         self._hold = p.hold
 
         for msg in p.alerts:
-            if now - self._notice_alerted_ms.get(msg, -_REPEAT_MS) >= _REPEAT_MS:
-                await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
-                self._notice_alerted_ms[msg] = now
+            await self._notice(msg)
 
         await self._announce_fills(tied)
         self.realized_24h = round(sum(
@@ -261,6 +268,14 @@ class StaticGrid:
             sum(1 for c in p.cells if c.state == "buy"))
         metrics.grid_open_trades.labels(coin=self.coin).set(
             sum(1 for c in p.cells if c.state in ("sell", "unsold")))
+
+    async def _notice(self, msg: str, key: str | None = None) -> None:
+        """An error alert, at most once an hour per kind."""
+        now = self._now_ms()
+        key = key or msg
+        if now - self._notice_alerted_ms.get(key, -_REPEAT_MS) >= _REPEAT_MS:
+            await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
+            self._notice_alerted_ms[key] = now
 
     async def _announce_fills(self, tied: list[tuple[TaggedFill, dict]]) -> None:
         """Only fills since the start: after a restart the history is still on the

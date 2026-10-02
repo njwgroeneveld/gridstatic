@@ -5,8 +5,8 @@ made up front: they were forced by incidents, and those are described here too, 
 reasoning is more useful than the rule.
 
 - [Principles](#principles)
+- [The exchange is the only source of truth](#the-exchange-is-the-only-source-of-truth)
 - [The strategy](#the-strategy)
-- [Data and the database](#data-and-the-database)
 - [Deployment and secrets](#deployment-and-secrets)
 - [Incidents](#incidents)
 - [Known limitations](#known-limitations)
@@ -15,122 +15,162 @@ reasoning is more useful than the rule.
 
 ## Principles
 
-**A check that only runs in simulation tests the simulation, not the bot.** Shadow mode uses
-exact prices and ideal fills. Any safeguard that depends on those properties will pass in shadow
-and fail live. Tests must model live behaviour — real fill prices, partial fills, API errors —
-or they only confirm what shadow already does.
+**One source of truth.** The bot keeps no record of its own. Every decision is made from what
+the exchange says right now: open orders, the position, recent fills. Up to version 0.3 the bot
+kept a database next to the exchange, and every incident below came from the two disagreeing.
 
 **Fail loudly rather than assume.** A failed API call must never read as an empty result.
-"The exchange is unreachable" and "there are no orders" lead to opposite actions.
+"The exchange is unreachable" and "there are no orders" lead to opposite actions. A round that
+cannot read everything does nothing.
 
-**One place per responsibility.** Only the dal touches the database; only the connector touches
-the exchange; only grid-static decides what to trade. That makes each failure point obvious and
-each service testable on its own.
+**When in doubt, do not buy.** A buy too few costs one missed cycle. A buy too many is how a
+grid once bought the same line eight times. Any position the bot cannot account for stops new
+buys until it can.
 
-**Reaching real money takes deliberate steps.** Everything defaults to shadow. Going live needs
-both an exchange key and `shadow: false` on a specific grid, and is done by hand.
+**A check that only runs in a simulation tests the simulation, not the bot.** Shadow mode used
+exact prices and ideal fills, and a safeguard that depended on those properties passed there for
+months while failing live ([incident 1](#1-eight-buys-on-one-line-2026-09-09)). Shadow mode is
+gone; the bot is tested on Hyperliquid's testnet, against a real order book.
+
+**Reaching real money takes deliberate steps.** Everything defaults to testnet. Mainnet needs a
+mainnet key and `hyperliquid.testnet: false`, and is done by hand.
+
+---
+
+## The exchange is the only source of truth
+
+### Why there is no database
+
+The database held the bot's view of its own orders and trades. The bot decided from that view,
+and updated it after the exchange had acted. Two writes that are not atomic drift apart, and
+every incident in this document is such a drift:
+
+| | what drifted |
+|---|---|
+| [Incident 1](#1-eight-buys-on-one-line-2026-09-09) | the database said "line free", the exchange held the position |
+| [Incident 2](#2-prices-arrived-as-strings-2026-09-10) | `Decimal` → JSON on the way out of the database service |
+| [Incident 3](#3-a-crash-on-every-fresh-install-2026-09-10) | waiting for the database schema at startup |
+
+On top of that the database cost a service, a hosted project, a choice of connection pooler, a
+Secret, an initContainer, a schema copy with its own CI check, and half of the installer.
+Everything the bot needs is already on the exchange.
+
+### A cell, and the client order id
+
+Lines `p_0 < p_1 < … < p_n-1` divide the range. A **cell** `i` is a pair: buy at `p_i`, sell at
+`p_i+1`. Every order belongs to exactly one cell, and its client order id (cloid, 16 bytes) says
+which:
+
+| bytes | |
+|---|---|
+| 0–1 | magic `0x6773` — a gridstatic order |
+| 2 | version |
+| 3–8 | grid fingerprint: coin, bounds, line count, leverage |
+| 9–10 | cell |
+| 11 | side |
+| 12–15 | nonce, so no two orders share a cloid |
+
+Hyperliquid hands the cloid back with every resting order. After a restart the bot reads the book
+and knows which cell each order is on — without a record, and without comparing prices, which
+the exchange rounds and fills at prices of its own ([incident 1](#1-eight-buys-on-one-line-2026-09-09)).
+
+Fills carry only the order id, not the cloid. The bot keeps an in-memory map from order id to
+cloid, filled when it places an order and whenever it reads the book; anything missing is looked
+up with `orderStatus`. Losing that map costs a few lookups after a restart, never a wrong
+decision: a fill that cannot be tied to a cell leaves the position unexplained, and the grid
+holds until it can.
+
+A grid's fingerprint changes with any of its five settings. Orders with another fingerprint
+belong to an earlier grid: the bot does not touch them, and holds until they are gone.
+
+### What a cell holds
+
+The rule that carries the design: **a cell's unsold coin is what it bought after its current
+sell was placed** — or, without a resting sell, after its last sell fill.
+
+It works because the bot sizes every sell to cover everything the cell holds at that moment.
+Anything bought later has no exit yet. That one rule covers a partial fill, a buy that filled
+completely and left the book, a restart, and a crash between cancelling a small sell and placing
+the bigger one that replaces it.
+
+### The position has to add up
+
+`residual = position − resting sells − unsold coin`. In a healthy grid it is zero within half a
+lot. Before the bot places any new buy, it has to be:
+
+| | grid holds — no new buys |
+|---|---|
+| residual > 0 | coin no cell accounts for: a manual position, another bot, fills older than the look-back |
+| residual < 0 | resting sells exceed the position |
+| orders with another fingerprint | an earlier grid on this coin |
+| short position | a grid only ever holds long |
+| none of last round's orders on the book or filled | the bot reads another account than it trades on |
+
+On hold, sells still go out for coin the bot can account for, and the grid resumes by itself once
+the cause is gone. The last row matters more than it looks: with the exchange as the only truth,
+a bot that reads the wrong account sees an empty book every round, finds nothing unexplained, and
+would buy a full layer again every 30 seconds. An API wallet configured without the account it
+trades for does exactly that.
+
+### One round
+
+```
+read open orders, position, price, fills  ── any read fails → do nothing this round
+tie fills to cells through their cloid
+reconcile → cancels, sells, buys, hold
+cancel; then sells; then buys
+report fills, closed cycles, hold changes
+```
+
+`reconcile` has no I/O and no memory. It is where every decision is made, and it is tested on
+its own, case by case. Each safety rule was mutated away once to confirm a test fails without it.
+
+A filled sell leaves its cell empty, and the next round puts the buy back. A cycle is not a
+separate code path; it is the next round.
 
 ---
 
 ## The strategy
 
-### A grid line is identified by its number, not its price
+### Order size is fixed
 
-Every order and every open position is tied to a line number (`level`). Prices are kept for
-display and P&L, but never compared as keys.
+The size per line is `startBalance × strategyAllocationPct × allocationPct ÷ lines`, and it does
+not grow with profit. Growing it needs the realised profit since the start, which the exchange
+cannot report once its fill history rolls over — it keeps the last 10,000 fills — and the bot
+keeps no record to add it up.
 
-The price that comes back from the exchange is not the price the bot asked for. The connector
-rounds every limit price to five significant digits, the exchange fills at a price of its own,
-and a partial fill averages the entry across pieces. A grid line at 79,210.53 comes back as a
-trade at 79,211. Matching on price therefore never matches. See
-[incident 1](#1-eight-buys-on-one-line-2026-09-09).
-
-A line counts as **occupied** in two cases: it has a resting order, **or** it holds an open
-position waiting for its sell. The second case is easy to miss — a filled buy leaves no resting
-order behind — and missing it is what caused the incident.
-
-### Order size comes from fixed capital, not account value
-
-The size per line is `startBalance × allocation ÷ lines`, plus realised profit. It is
-deliberately not derived from the exchange account value. That value moves with unrealised
+It is deliberately not derived from the account value either. That value moves with unrealised
 P&L, so lines would shrink exactly while the grid is buying its way down, and grow again as it
-sells — the opposite of what a grid needs. Using the same rule live and in shadow also keeps
-the two comparable.
+sells — the opposite of what a grid needs. At startup the bot compares what a full grid needs
+with the account value and warns if it cannot be carried.
 
-The cost is that nothing checks `startBalance` against the money actually available. Set it too
-high and the exchange rejects orders for insufficient margin. See
-[known limitations](#known-limitations).
+### One buy and one sell per cell
 
-### Two sells may stack on one line; two buys may not
+Each cell has at most one resting buy and one resting sell. A sell on line `j` always belongs to
+cell `j−1`, so two sells on one line cannot occur. When a later fill grows what a cell holds, the
+bot cancels the smaller sell and places one that covers it all — and only places the new one if
+the cancel succeeded, so a cell never ends up with two. Should two still appear, the bot keeps
+the oldest buy (its place in the queue) and the newest sell (the one sized to the whole cell).
 
-Two different buy orders can legitimately both exit one line higher, so duplicate sells on a
-line are allowed. Skipping the second sell once left a position with no exit. Duplicate *buys*
-on a line are never legitimate, and a partial unique index enforces that
-([below](#the-unique-index-is-detection-not-protection)).
+Sells are placed **reduce-only**. Whatever the bot believes, a sell can never open a short.
 
-### A grid is recognised by its settings on restart
+### No buy on the top line, none near the price
 
-On startup the bot looks for an active grid with the same coin, number of lines, bounds and
-leverage. If it finds one, it recovers that grid's state; if not, it builds a new one.
+The top line has no line above it for the sell. And a buy within a tenth of a spacing below the
+price would sit on top of the market.
 
-Consequences worth knowing:
+### One grid per coin
 
-- Changing any of those five settings creates a **new** grid, while the old one's orders stay on
-  the exchange unmanaged.
-- Changing `shadow` does not create a new grid, so a shadow grid switched to live continues in
-  the same record.
-- Two stacks sharing one database would recognise each other's grids and manage them twice.
+The exchange keeps one net position per coin per account. Two grids on one coin share it and can
+no longer tell what is theirs; the position check would fail for both. The bot refuses to start
+with such a configuration.
 
-### Startup waits for its dependencies
+### Refusing to start
 
-grid-static waits for both the connector and the dal before it touches either, and every
-deployment has a readiness probe. On a fresh install the dal is ready later than grid-static,
-because its initContainer applies the schema first. See
-[incident 3](#3-a-crash-on-every-fresh-install-2026-09-10).
-
----
-
-## Data and the database
-
-### Money is stored as numeric; the dal returns floats
-
-Prices, sizes and profit are `numeric`, because floating-point rounding shows up in sums.
-`leverage` stays `double precision`: it is a multiplier, not money.
-
-psycopg2 returns `numeric` as Python `Decimal`, and FastAPI serialises a `Decimal` on a route
-annotated with `dict` as a JSON **string**. The dal therefore converts every `Decimal` to `float`
-before a row leaves the service, in one place (`Database._execute`). See
-[incident 2](#2-prices-arrived-as-strings-2026-09-10).
-
-### The unique index is detection, not protection
-
-```sql
-CREATE UNIQUE INDEX grid_orders_one_open_buy_per_level
-    ON gridtrading.grid_orders (grid_config_id, level)
-    WHERE status = 'OPEN' AND side = 'BUY';
-```
-
-It makes two resting buys on one line impossible to record. It would **not** have prevented
-incident 1: those buys had already filled and were no longer `OPEN`. And when it fires, it leaves
-an orphan: the bot places the order on the exchange first and writes to the database second, so
-a rejected row means an order that nothing tracks. Treat it as an alarm.
-
-### The schema is applied by an initContainer, not a Helm hook
-
-A `pre-install` hook runs before the chart's regular resources — including the Secret that holds
-the connection string — and Helm waits for the hook to finish. That deadlocks. The dal is the
-only service that touches the database, so it applies the schema itself in an initContainer that
-waits for the database and runs an idempotent script on every start.
-
-### Use your own database, and the Supabase session pooler
-
-A second stack on the same database finds the first stack's active grids and treats them as its
-own. A Kubernetes namespace does not isolate database rows; only the connection string does.
-
-Supabase's direct connection (`db.<ref>.supabase.co`) has had no IPv4 address since 2024, so it
-fails from most clusters. The session pooler on port 5432 is reachable over IPv4 and suits a
-long-running service. (psycopg2 does not use server-side prepared statements, so the transaction
-pooler would also work; the session pooler is simply the better fit.)
+The bot refuses a configuration it must not trade with, and names the problem: an order under
+the exchange's $10 minimum, two grids on one coin, a missing `startBalance`, or a grid that still
+says `shadow: true` — which would otherwise place real orders for someone who believes they are
+simulating. Refusing costs nothing; trading on a wrong assumption costs money.
 
 ---
 
@@ -139,40 +179,44 @@ pooler would also work; the session pooler is simply the better fit.)
 ### Secrets never pass through Helm
 
 Helm stores the values you install with in a Secret in the cluster
-(`sh.helm.release.v1.<name>.v1`), and `helm get values` prints them back. A password passed as a
-chart value is stored a second time and shown to anyone allowed to run Helm.
+(`sh.helm.release.v1.<name>.v1`), and `helm get values` prints them back. A key passed as a chart
+value is stored a second time and shown to anyone allowed to run Helm.
 
 So the chart creates no Secrets. It takes the *name* of a Secret you create yourself
 (`existingSecret`), and CI fails if the chart ever renders one.
 
 Secret values are read with hidden input, base64-encoded over a pipe and sent to
 `kubectl apply -f -` on stdin — never with `--from-literal=key=value`, which puts the value in
-shell history and in the process list. Encoding also keeps a password containing quotes or
-backslashes from breaking the YAML. `install.sh` does the same.
+shell history and in the process list. `install.sh` does the same.
 
-### No key is needed for shadow mode
+### Prices from the network the orders go to
 
-The connector builds its exchange client the first time a route needs the account — orders,
-positions, fills — not at startup. Without a key it starts normally, serves prices from
-Hyperliquid's public API, and answers 503 on the account routes. Shadow mode only needs prices.
-That makes a complete shadow installation possible without a single exchange credential — the
-right way to let someone try the project.
+The connector reads prices from the same Hyperliquid network it trades on. Up to 0.3 the price
+feed always came from mainnet, which suited shadow mode; a testnet grid priced off mainnet would
+place its orders at prices that do not exist on testnet.
 
-### Going live is manual
+### Testnet by default; mainnet by hand
 
-There was briefly a script for it. It made going live faster, and speed is not a virtue there: it
-is a step you want to take slowly, with your own eyes on what changes. The installer covers the
-harmless half (shadow); the README covers the other half by hand.
+A fresh installation trades on testnet. Moving to mainnet is a step you want to take slowly,
+with your own eyes on what changes, so it is described in the README rather than scripted.
 
 ### One replica, Recreate strategy
 
 Two grid-static pods managing the same grid would place duplicate orders, so there is exactly one
 replica and deployments use `Recreate`, not `RollingUpdate`. The price is a few seconds without a
-running bot during every upgrade. Resting orders stay on the exchange meanwhile.
+running bot during every upgrade. Resting orders stay on the exchange meanwhile, and the new pod
+picks them up through their cloids.
+
+### Startup waits for the connector
+
+grid-static waits for the connector before it touches it, and every deployment has a readiness
+probe, so a pod is only "ready" once its application has actually started.
 
 ---
 
 ## Incidents
+
+These happened with versions that kept a database. Each one ends with what is different now.
 
 ### 1. Eight buys on one line (2026-09-09)
 
@@ -181,76 +225,80 @@ seconds apart — the health-check interval plus jitter. The position grew to 0.
 a fully filled 20-line grid could ever intend to hold. The stacked sells visible on the exchange
 were the symptom; the duplicate buys were the cause.
 
-**Cause.** The health loop refills empty lines below the price. It decided a line was free with
+**Cause.** The health loop refilled empty lines below the price. It decided a line was free with
 two guards: no resting order on the line, and no open trade at the line's price. The first guard
 lapses as soon as a buy fills. The second compared the *line* price with the *fill* price, and
 those never matched live (5-significant-digit rounding, slippage, averaged partial fills). So
 every filled line looked free again within a minute and was bought again.
 
-**Why shadow never showed it.** Shadow fills at the exact line price, so the price comparison
+**Why shadow never showed it.** Shadow filled at the exact line price, so the price comparison
 matched there. The guard worked only in the mode where it did not matter.
 
 A second, related flaw: the exchange client turned any API error into an empty list. Recovery read
 an empty order book as "everything filled", and the fill loop advanced its watermark before the
 fetch succeeded, silently dropping fills on failure.
 
-**Fix.** Occupied lines are now resting orders **plus** open positions, matched by line number
-(the dal joins each trade to its buy order's level). API read errors raise instead of returning
-empty lists; recovery skips reconciliation when the exchange is unreadable; the watermark moves
-only after a successful fetch. Every new test was verified to fail on the old code.
+**Fix at the time.** Occupied lines became resting orders plus open positions, matched by line
+number. API read errors raise instead of returning empty lists. The grid was flattened at a cost
+of $0.57.
 
-**Cleanup.** The grid was flattened — orders cancelled, position closed, records closed — at a
-cost of $0.57 in fees and spread.
+**Now.** A cell with a filled buy is never free: either its fill is tied to it (unsold coin, the
+cell is taken and gets a sell) or it is not (the position does not add up, and the grid holds).
+The guard is the position on the exchange, not bookkeeping that can drift from it. This is the
+first regression test of `reconcile`, and it fails when the hold rule is removed.
 
 ### 2. Prices arrived as strings (2026-09-10)
 
-**What happened.** On the first live run of this stack, the fill loop failed every 30 seconds with
-`'>' not supported between instances of 'float' and 'str'`.
+**What happened.** On the first live run of the standalone stack, the fill loop failed every 30
+seconds with `'>' not supported between instances of 'float' and 'str'`.
 
 **Cause.** Money columns had just been changed to `numeric`. psycopg2 returns those as `Decimal`,
 and FastAPI serialised them as JSON strings. The change had been "verified" with FastAPI's
-`jsonable_encoder`, which does return floats — but the dal's routes are annotated with `dict`,
-which sends serialisation through Pydantic v2 instead. The right conclusion was drawn from the
-wrong measurement. The unit tests could not catch it: their mocks returned floats.
+`jsonable_encoder`, which does return floats — but the routes were annotated with `dict`, which
+sends serialisation through Pydantic v2 instead. The right conclusion was drawn from the wrong
+measurement. The unit tests could not catch it: their mocks returned floats.
 
-**Worse than the visible error.** The grid-recognition check compares `upper`, `lower` and
-`leverage` for equality. With strings, `"83000" == 83000` is `False`: on the next restart the bot
-would not have recognised its own grid and would have placed a second layer of orders.
+**Worse than the visible error.** Grid recognition compared bounds for equality. With strings,
+`"83000" == 83000` is `False`: on the next restart the bot would not have recognised its own grid
+and would have placed a second layer of orders.
 
-**Fix.** The dal converts `Decimal` to `float` in `Database._execute`, with a test that fails
-without the conversion.
+**Lesson, still in force.** Verify an assumption on the path the code actually takes. When a
+change crosses a type boundary — database, driver, serialiser, client — reproduce that boundary,
+and distrust mocks that already return the corrected type.
 
-**Lesson.** Verify an assumption on the path the code actually takes. When a change crosses a type
-boundary — database, driver, serialiser, client — reproduce that boundary, and distrust mocks that
-already return the corrected type.
+**Now.** There is no database to cross. Grid recognition is a fingerprint in the cloid, computed
+from the settings after converting every number to `float`. The lesson was applied while building
+0.4: the real status output was piped through the real alerter formatter (which found a bug no
+test had), the real SDK signatures were checked against the calls, and `gridcheck` was run
+against the real testnet API.
 
 ### 3. A crash on every fresh install (2026-09-10)
 
 **What happened.** On a fresh install grid-static restarted once with
 `httpx.ConnectError: All connection attempts failed`, then came up fine.
 
-**Cause.** Startup waited for the connector but not for the dal, whose initContainer was still
-applying the schema. The first database call failed, uvicorn exited, and Kubernetes restarted the
-pod. Self-healing — but it looks like a broken installation, and after a node outage every pod
-starts at once, which is exactly when the race is most likely.
+**Cause.** Startup waited for the connector but not for the database service, whose
+initContainer was still applying the schema. The first database call failed, uvicorn exited, and
+Kubernetes restarted the pod.
 
-**Fix.** A shared wait loop for both dependencies, and readiness probes on all four deployments,
-so a pod is only "ready" once its application has actually started.
+**Now.** There is no database service and no schema to wait for. The wait loop and the readiness
+probes stay.
 
 ---
 
 ## Known limitations
 
-- **Orders are written to the exchange before the database.** A database failure between the two
-  leaves an order that nothing tracks. The fix is a reserved row before the exchange call, or a
-  reconciliation pass that cancels unknown orders.
-- **No check of `startBalance` against the real balance.** A live grid sized beyond the available
-  margin only finds out when the exchange rejects orders. A startup check that compares the two
-  and warns is planned.
+- **History is short.** Realised profit is reported for the last 24 hours from the exchange's
+  fills; there is no total since the start, and the exchange keeps only the last 10,000 fills.
+  The Prometheus counters add up while the pod runs.
+- **API wallets are not supported yet.** The connector passes `wallet_address` as the vault
+  (subaccount) to trade for, and reads that address. An API wallet needs the account it trades
+  for passed differently; until then the bot detects the mismatch and holds.
+- **A long outage needs a look.** Coin bought more than `fillLookbackHours` before the bot saw it
+  cannot be tied to its cell. The grid holds, and a person decides.
+- **One grid per coin per account.** Several grids on one coin need several accounts, and several
+  installations.
 - **Logs do not survive a restart.** Only the current container's log is available (plus one
-  previous one). Without Telegram, errors from before a restart are lost; the database and the
-  exchange remain the reliable record, which is why `tools/gridcheck.py` relies on them.
-- **Leftovers from a larger system.** The connector still exposes take-profit, stop-loss and
-  close-position routes that grid-static never calls, and the alerter's `/status` matches orders
-  by price — a choice made for a trailing grid that does not exist in this repository.
+  previous one). The exchange is the reliable record, which is why `tools/gridcheck.py` reads it
+  directly.
 - **Kubernetes Secrets are not encrypted at rest** unless your cluster enables it.
