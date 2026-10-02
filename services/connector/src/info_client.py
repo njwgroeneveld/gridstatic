@@ -8,12 +8,24 @@ _SSL_VERIFY = os.getenv("SSL_VERIFY", "true").lower() != "false"
 if not _SSL_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-_INFO_URL = os.getenv("HYPERLIQUID_INFO_URL", "https://api.hyperliquid.xyz/info")
+_MAINNET_INFO_URL = "https://api.hyperliquid.xyz/info"
+_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
+
+
+def _info_url() -> str:
+    """Prices come from the network the orders go to. A testnet grid priced off
+    mainnet places its orders at prices that do not exist on testnet.
+    HYPERLIQUID_INFO_URL still overrides, for a proxy or a mirror."""
+    override = os.getenv("HYPERLIQUID_INFO_URL")
+    if override:
+        return override
+    testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() != "false"
+    return _TESTNET_INFO_URL if testnet else _MAINNET_INFO_URL
 
 
 class InfoClient:
     def __init__(self, connect_timeout: float = 5, read_timeout: float = 15):
-        self.url = _INFO_URL
+        self.url = _info_url()
         self.timeout = (connect_timeout, read_timeout)
         self.session = requests.Session()
         self._new_session()

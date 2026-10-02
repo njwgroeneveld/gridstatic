@@ -53,30 +53,11 @@ def _ex() -> ExchangeClient:
 
 class LimitOrderReq(BaseModel):
     coin: str
-    direction: str
+    is_buy: bool
     price: float
-    size_usd: float
-    leverage: int = 3
-
-
-class TpOrderReq(BaseModel):
-    coin: str
-    direction: str
-    sz_coin: float
-    limit_price: float
-
-
-class SlOrderReq(BaseModel):
-    coin: str
-    direction: str
-    sz_coin: float
-    trigger_price: float
-
-
-class ClosePositionReq(BaseModel):
-    direction: str
-    size_usd: float
-    entry_price: float
+    sz: float
+    cloid: str | None = None
+    reduce_only: bool = False
 
 
 class LeverageReq(BaseModel):
@@ -108,7 +89,13 @@ def get_account_value():
 
 @app.get("/positions")
 def get_positions():
-    return _ex().get_open_positions()
+    # An unreadable position must never look like "no position".
+    try:
+        return _ex().get_open_positions()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/orders/{coin}")
@@ -143,40 +130,27 @@ def get_meta(coin: str):
 
 @app.post("/orders/limit")
 def place_limit(req: LimitOrderReq):
-    result = _ex().place_limit_order(req.coin, req.direction, req.price, req.size_usd, req.leverage)
+    result = _ex().place_limit_order(req.coin, req.is_buy, req.price, req.sz,
+                                     req.cloid, req.reduce_only)
     if result["status"] != "ok":
         raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 
 
-@app.post("/orders/tp")
-def place_tp(req: TpOrderReq):
-    result = _ex().place_tp_limit_order(req.coin, req.direction, req.sz_coin, req.limit_price)
-    if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reason"))
-    return result
-
-
-@app.post("/orders/sl")
-def place_sl(req: SlOrderReq):
-    result = _ex().place_sl_trigger_order(req.coin, req.direction, req.sz_coin, req.trigger_price)
-    if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reason"))
-    return result
+@app.get("/orders/status/{oid}")
+def order_status(oid: int):
+    try:
+        return _ex().get_order_status(oid)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.delete("/orders/{coin}/{oid}")
 def cancel_order(coin: str, oid: str):
     result = _ex().cancel_order(coin, oid)
     if result["status"] != "ok":
-        raise HTTPException(status_code=502, detail=result.get("reason"))
-    return result
-
-
-@app.post("/positions/{coin}/close")
-def close_position(coin: str, req: ClosePositionReq):
-    result = _ex().close_position_market(coin, req.direction, req.size_usd, req.entry_price)
-    if result["status"] not in ("ok", "not_found"):
         raise HTTPException(status_code=502, detail=result.get("reason"))
     return result
 

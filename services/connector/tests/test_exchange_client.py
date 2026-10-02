@@ -77,134 +77,122 @@ def test_cancel_order_returns_ok():
     client._exchange.cancel.assert_called_once_with("BTC", 12345)
 
 
-def test_place_limit_order_returns_order_id():
+# ── placing orders ─────────────────────────────────────────────────────────────
+
+_OK_RESTING = {"status": "ok", "response": {"data": {"statuses": [{"resting": {"oid": 99}}]}}}
+CLOID = "0x6773" + "01" + "aa" * 6 + "0003" + "01" + "deadbeef"
+
+
+def _orderable_client(sz_decimals: int = 5) -> ExchangeClient:
     client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 4}]}
-    client._exchange.order.return_value = {
-        "status": "ok",
-        "response": {"data": {"statuses": [{"resting": {"oid": 99}}]}},
-    }
-    result = client.place_limit_order("BTC", "BUY", 103000.0, 1000.0, leverage=3)
-    assert result["status"] == "ok"
-    assert result["hl_order_id"] == "99"
+    client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": sz_decimals}]}
+    client._exchange.order.return_value = _OK_RESTING
+    return client
 
 
-def test_place_limit_order_recovers_oid_via_open_orders():
-    """OID missing from the response -> recovered from open orders (order still resting)."""
-    client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "ETH", "szDecimals": 4}]}
-    client._exchange.order.return_value = {
-        "status": "ok",
-        "response": {"data": {"statuses": [{"filled": {"totalSz": "0.5", "avgPx": "2000"}}]}},
-    }
-    client._info.frontend_open_orders.return_value = [
-        {"coin": "ETH", "isBuy": True, "limitPx": "2000.0",
-         "reduceOnly": False, "oid": 42},
-    ]
-
-    with patch("time.sleep"):
-        result = client.place_limit_order("ETH", "BUY", 2000.0, 1000.0, leverage=3)
-
-    assert result["status"] == "ok"
-    assert result["hl_order_id"] == "42"
+def test_place_limit_order_returns_the_oid_and_the_cloid():
+    client = _orderable_client()
+    result = client.place_limit_order("BTC", True, 80000.0, 0.0125, cloid=CLOID)
+    assert result == {"status": "ok", "oid": 99, "cloid": CLOID, "sz": 0.0125, "px": 80000.0}
 
 
-def test_place_limit_order_recovers_oid_via_fills():
-    """OID missing from the response and not in open orders -> recovered from recent fills."""
-    client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "ETH", "szDecimals": 4}]}
-    client._exchange.order.return_value = {
-        "status": "ok",
-        "response": {"data": {"statuses": [{"filled": {"totalSz": "0.5", "avgPx": "2000"}}]}},
-    }
-    client._info.frontend_open_orders.return_value = []
-    client._info.user_fills.return_value = [
-        {"coin": "ETH", "side": "B", "time": 9999999999999, "oid": 77},
-    ]
-
-    with patch("time.sleep"):
-        result = client.place_limit_order("ETH", "BUY", 2000.0, 1000.0, leverage=3)
-
-    assert result["status"] == "ok"
-    assert result["hl_order_id"] == "77"
+def test_place_limit_order_hands_the_cloid_to_the_exchange():
+    # The cloid is how the bot recognises its own orders after a restart; an
+    # order without it would be invisible to the grid.
+    client = _orderable_client()
+    client.place_limit_order("BTC", True, 80000.0, 0.0125, cloid=CLOID)
+    sent = client._exchange.order.call_args.kwargs["cloid"]
+    assert str(sent) == CLOID
 
 
-def test_place_limit_order_oid_none_when_recovery_fails():
-    """OID cannot be recovered -> hl_order_id=None but status=ok."""
-    client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "ETH", "szDecimals": 4}]}
-    client._exchange.order.return_value = {
-        "status": "ok",
-        "response": {"data": {"statuses": [{"filled": {"totalSz": "0.5", "avgPx": "2000"}}]}},
-    }
-    client._info.frontend_open_orders.return_value = []
-    client._info.user_fills.return_value = []
-
-    with patch("time.sleep"):
-        result = client.place_limit_order("ETH", "BUY", 2000.0, 1000.0, leverage=3)
-
-    assert result["status"] == "ok"
-    assert result["hl_order_id"] is None
+def test_place_limit_order_without_cloid_sends_none():
+    client = _orderable_client()
+    client.place_limit_order("BTC", True, 80000.0, 0.0125)
+    assert client._exchange.order.call_args.kwargs["cloid"] is None
 
 
-def test_recover_oid_ignores_reduce_only_orders():
-    """TP orders (reduce_only=True) are not mistaken for the entry OID."""
-    client = _make_client()
-    client._info.frontend_open_orders.return_value = [
-        {"coin": "ETH", "isBuy": True, "limitPx": "2000.0",
-         "reduceOnly": True, "oid": 55},   # TP order -- must be ignored
-    ]
-    client._info.user_fills.return_value = []
-
-    with patch("time.sleep"):
-        result = client._recover_oid("ETH", "BUY", 2000.0, 0)
-
-    assert result is None
+def test_place_limit_order_passes_reduce_only_for_a_sell():
+    # A reduce-only sell can never open a short, whatever the bot believes.
+    client = _orderable_client()
+    client.place_limit_order("BTC", False, 81000.0, 0.0125, cloid=CLOID, reduce_only=True)
+    args, kwargs = client._exchange.order.call_args
+    assert args[1] is False
+    assert kwargs["reduce_only"] is True
 
 
-def test_place_limit_order_rondt_prijs_af_naar_hl_precisie():
+def test_place_limit_order_takes_the_size_as_given_rounded_to_the_lot():
+    # The bot sizes the order in coin; the connector no longer multiplies by
+    # leverage -- doing it in both places would double every position.
+    client = _orderable_client(sz_decimals=4)
+    result = client.place_limit_order("BTC", True, 80000.0, 0.012345, cloid=CLOID)
+    assert client._exchange.order.call_args[0][2] == 0.0123
+    assert result["sz"] == 0.0123
+
+
+def test_place_limit_order_no_longer_touches_leverage():
+    client = _orderable_client()
+    client.place_limit_order("BTC", True, 80000.0, 0.0125, cloid=CLOID)
+    client._exchange.update_leverage.assert_not_called()
+
+
+def test_place_limit_order_rounds_the_price_to_hyperliquid_precision():
     """Grid levels like 75421.05 have 7 significant digits; Hyperliquid accepts 5."""
-    client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
-    client._exchange.order.return_value = {
-        "status": "ok",
-        "response": {"data": {"statuses": [{"resting": {"oid": 7}}]}},
-    }
-    result = client.place_limit_order("BTC", "BUY", 75421.05, 18.56, leverage=3)
-    assert result["status"] == "ok"
+    client = _orderable_client()
+    client.place_limit_order("BTC", True, 75421.05, 0.001, cloid=CLOID)
     assert client._exchange.order.call_args[0][3] == 75421.0
 
 
-def test_place_limit_order_meldt_afwijzing_als_fout():
+def test_place_limit_order_reports_a_rejection_as_an_error():
     """Hyperliquid answers status ok with the rejection in statuses[0] -- not a successful order."""
-    client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
+    client = _orderable_client()
     client._exchange.order.return_value = {
         "status": "ok",
         "response": {"data": {"statuses": [{"error": "Order has invalid price."}]}},
     }
-    result = client.place_limit_order("BTC", "BUY", 75421.05, 18.56, leverage=3)
+    result = client.place_limit_order("BTC", True, 75421.05, 0.001, cloid=CLOID)
     assert result["status"] == "error"
     assert "invalid price" in result["reason"]
 
 
-def test_place_limit_order_multiplies_size_by_leverage():
-    """Leverage enlarges the position. The exchange-side leverage setting only lowers
-    the margin requirement and never makes the order itself bigger, so the
-    multiplication has to happen here."""
-    client = _make_client()
-    client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
+def test_place_limit_order_refuses_a_size_that_rounds_to_zero():
+    client = _orderable_client(sz_decimals=2)
+    result = client.place_limit_order("BTC", True, 80000.0, 0.001, cloid=CLOID)
+    assert result["status"] == "error"
+    client._exchange.order.assert_not_called()
+
+
+def test_place_limit_order_reads_the_oid_of_an_order_that_filled_at_once():
+    client = _orderable_client()
     client._exchange.order.return_value = {
         "status": "ok",
-        "response": {"data": {"statuses": [{"resting": {"oid": 11}}]}},
+        "response": {"data": {"statuses": [{"filled": {"oid": 42, "totalSz": "0.0125",
+                                                        "avgPx": "80000"}}]}},
     }
+    assert client.place_limit_order("BTC", True, 80000.0, 0.0125, cloid=CLOID)["oid"] == 42
 
-    client.place_limit_order("BTC", "BUY", 80000.0, 1000.0, leverage=1)
-    sz_1x = client._exchange.order.call_args[0][2]
 
-    client.place_limit_order("BTC", "BUY", 80000.0, 1000.0, leverage=3)
-    sz_3x = client._exchange.order.call_args[0][2]
+# ── order status: which cell a fill belongs to ─────────────────────────────────
 
-    assert sz_1x == 0.0125
-    assert sz_3x == 0.0375
-    assert sz_3x == round(sz_1x * 3, 5)
+def test_get_order_status_returns_the_cloid():
+    client = _make_client()
+    client._info.query_order_by_oid.return_value = {
+        "status": "order",
+        "order": {"order": {"coin": "BTC", "oid": 99, "cloid": CLOID}, "status": "filled",
+                  "statusTimestamp": 1},
+    }
+    assert client.get_order_status(99) == {"oid": 99, "cloid": CLOID, "status": "filled"}
+    client._info.query_order_by_oid.assert_called_once_with("0xTEST", 99)
+
+
+def test_get_order_status_of_an_unknown_oid():
+    client = _make_client()
+    client._info.query_order_by_oid.return_value = {"status": "unknownOid"}
+    assert client.get_order_status(5) == {"oid": 5, "cloid": None, "status": "unknownOid"}
+
+
+def test_get_order_status_raises_when_the_exchange_cannot_be_read():
+    # "Could not ask" must never read as "this fill is not ours".
+    client = _make_client()
+    client._info.query_order_by_oid.side_effect = ConnectionError("down")
+    with pytest.raises(ConnectionError):
+        client.get_order_status(5)

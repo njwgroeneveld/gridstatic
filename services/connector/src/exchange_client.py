@@ -5,6 +5,7 @@ import os
 from eth_account import Account
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
+from hyperliquid.utils.types import Cloid
 
 log = logging.getLogger(__name__)
 
@@ -113,150 +114,38 @@ class ExchangeClient:
         except Exception as e:
             return {"status": "error", "reason": str(e)}
 
-    def place_limit_order(self, coin: str, direction: str, price: float,
-                          size_usd: float, leverage: int = 3) -> dict:
+    def place_limit_order(self, coin: str, is_buy: bool, price: float, sz: float,
+                          cloid: str | None = None, reduce_only: bool = False) -> dict:
+        """A GTC limit order, sized in coin by the caller. The caller also picks
+        the cloid, so an order can always be found again by it -- there is no
+        "ok but no oid" case to recover from any more."""
         try:
-            self.set_leverage(coin, leverage)
             px = _round_price(price)
-            # Leverage multiplies the position: the exchange-side leverage
-            # setting only lowers the margin requirement, it never sizes the
-            # order. Notional = size_usd * leverage.
-            sz = round(size_usd * leverage / px, self.get_sz_decimals(coin))
+            sz = round(sz, self.get_sz_decimals(coin))
             if sz <= 0:
-                return {"status": "error", "reason": "position size too small"}
-            import time as _time
-            placed_at_ms = int(_time.time() * 1000)
-            result = self._exchange.order(coin, direction == "BUY", sz, px,
-                                          {"limit": {"tif": "Gtc"}})
-            if result.get("status") == "ok":
-                statuses = result["response"]["data"]["statuses"]
-                if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reason": statuses[0]["error"]}
-                oid = (statuses[0].get("resting", {}).get("oid")
-                       or statuses[0].get("filled", {}).get("oid"))
-                if oid is None:
-                    log.warning(f"[{coin}] limit order OK but no OID in response: {statuses[0]}")
-                    oid = self._recover_oid(coin, direction, px, placed_at_ms)
-                return {"status": "ok", "hl_order_id": str(oid) if oid is not None else None,
-                        "sz_coin": sz}
-            return {"status": "error", "reason": str(result.get("response", "unknown"))}
+                return {"status": "error", "reason": "size rounds to zero"}
+            result = self._exchange.order(coin, is_buy, sz, px, {"limit": {"tif": "Gtc"}},
+                                          reduce_only=reduce_only,
+                                          cloid=Cloid.from_str(cloid) if cloid else None)
+            if result.get("status") != "ok":
+                return {"status": "error", "reason": str(result.get("response", "unknown"))}
+            statuses = result["response"]["data"]["statuses"]
+            if statuses and "error" in statuses[0]:
+                return {"status": "error", "reason": statuses[0]["error"]}
+            oid = (statuses[0].get("resting", {}).get("oid")
+                   or statuses[0].get("filled", {}).get("oid"))
+            return {"status": "ok", "oid": oid, "cloid": cloid, "sz": sz, "px": px}
         except Exception as e:
             return {"status": "error", "reason": str(e)}
 
-    def _recover_oid(self, coin: str, direction: str, price: float,
-                     placed_at_ms: int) -> int | None:
-        """Recover the OID from open orders or recent fills when the response lacked one."""
-        import time as _time
-        _time.sleep(0.5)
-        is_buy = direction == "BUY"
-
-        # Step 1: open orders (the order is still resting)
-        try:
-            orders = self._info.frontend_open_orders(self._wallet_address)
-            for o in orders:
-                if (o.get("coin") == coin
-                        and bool(o.get("isBuy")) == is_buy
-                        and not o.get("reduceOnly", False)
-                        and abs(float(o.get("limitPx", 0)) - price) / price < 0.002):
-                    oid = o.get("oid")
-                    if oid is not None:
-                        log.info(f"[{coin}] OID recovered from open orders: {oid}")
-                        return oid
-        except Exception as e:
-            log.warning(f"[{coin}] open orders query failed during OID recovery: {e}")
-
-        # Step 2: recent fills (the order filled immediately)
-        try:
-            fills = self._info.user_fills(self._wallet_address)
-            fill_side = "B" if is_buy else "A"
-            for f in fills:
-                if (f.get("coin") == coin
-                        and f.get("side") == fill_side
-                        and int(f.get("time", 0)) >= placed_at_ms):
-                    oid = f.get("oid")
-                    if oid is not None:
-                        log.info(f"[{coin}] OID recovered from fills: {oid}")
-                        return oid
-        except Exception as e:
-            log.warning(f"[{coin}] fills query failed during OID recovery: {e}")
-
-        log.error(f"[{coin}] OID recovery failed -- order cannot be traced on Hyperliquid")
-        return None
-
-    def place_tp_limit_order(self, coin: str, direction: str,
-                             sz_coin: float, limit_price: float) -> dict:
-        try:
-            is_buy = direction == "SELL"
-            sz = round(sz_coin, self.get_sz_decimals(coin))
-            if sz <= 0:
-                return {"status": "error", "reason": "TP size too small"}
-            result = self._exchange.order(coin, is_buy, sz, _round_price(limit_price),
-                                          {"limit": {"tif": "Gtc"}}, reduce_only=True)
-            if result.get("status") == "ok":
-                statuses = result["response"]["data"]["statuses"]
-                if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reason": statuses[0]["error"]}
-                oid = (statuses[0].get("resting", {}).get("oid")
-                       or statuses[0].get("filled", {}).get("oid"))
-                if oid is None:
-                    log.warning(f"[{coin}] TP order OK but no OID in response: {statuses[0]}")
-                return {"status": "ok", "hl_order_id": str(oid) if oid is not None else None}
-            return {"status": "error", "reason": str(result.get("response", "unknown"))}
-        except Exception as e:
-            return {"status": "error", "reason": str(e)}
-
-    def place_sl_trigger_order(self, coin: str, direction: str,
-                               sz_coin: float, trigger_price: float) -> dict:
-        try:
-            is_buy = direction == "SELL"
-            sz = round(sz_coin, self.get_sz_decimals(coin))
-            if sz <= 0:
-                return {"status": "error", "reason": "SL size too small"}
-            tp = _round_price(trigger_price)
-            lp = _round_price(tp * (1.05 if is_buy else 0.95))
-            result = self._exchange.order(
-                coin, is_buy, sz, lp,
-                {"trigger": {"triggerPx": tp, "isMarket": True, "tpsl": "sl"}},
-                reduce_only=True,
-            )
-            if result.get("status") == "ok":
-                statuses = result["response"]["data"]["statuses"]
-                if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reason": statuses[0]["error"]}
-                oid = (statuses[0].get("resting", {}).get("oid")
-                       or statuses[0].get("filled", {}).get("oid")
-                       or statuses[0].get("triggered", {}).get("oid"))
-                if oid is None:
-                    log.warning(f"[{coin}] SL trigger order OK but no OID in response: {statuses[0]}")
-                return {"status": "ok", "hl_order_id": str(oid) if oid is not None else None}
-            return {"status": "error", "reason": str(result.get("response", "unknown"))}
-        except Exception as e:
-            return {"status": "error", "reason": str(e)}
-
-    def close_position_market(self, coin: str, direction: str,
-                              size_usd: float, entry_price: float) -> dict:
-        try:
-            import time as _time
-            close_ms = int(_time.time() * 1000)
-            result = self._exchange.market_close(coin)
-            if result is None:
-                return {"status": "not_found", "reason": "position not found on exchange"}
-            if result.get("status") == "ok":
-                statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
-                if statuses and "error" in statuses[0]:
-                    return {"status": "error", "reason": statuses[0]["error"]}
-                oid = str(statuses[0].get("filled", {}).get("oid", "")) if statuses else ""
-                try:
-                    fills = self._info.user_fills_by_time(self._wallet_address, close_ms - 3000) or []
-                    close_fills = [f for f in fills
-                                   if f.get("coin") == coin
-                                   and str(f.get("oid", "")) == oid
-                                   and f.get("closedPnl") is not None]
-                    closed_pnl = round(sum(float(f["closedPnl"]) for f in close_fills), 2) if close_fills else None
-                except Exception as e:
-                    log.warning(f"[{coin}] fetching closedPnl failed: {e}")
-                    closed_pnl = None
-                return {"status": "ok", "closed_pnl": closed_pnl}
-            return {"status": "error", "reason": str(result.get("response", "unknown"))}
-        except Exception as e:
-            return {"status": "error", "reason": str(e)}
+    def get_order_status(self, oid: int) -> dict:
+        """Which cloid an order carried. Fills only name the oid, so this is how a
+        fill of an order that has left the book is tied back to its grid cell.
+        Raises when the exchange cannot be read: "could not ask" must never read
+        as "not one of ours"."""
+        resp = self._info.query_order_by_oid(self._wallet_address, int(oid))
+        if resp.get("status") != "order":
+            return {"oid": int(oid), "cloid": None, "status": resp.get("status", "unknown")}
+        entry = resp.get("order", {})
+        return {"oid": int(oid), "cloid": entry.get("order", {}).get("cloid"),
+                "status": entry.get("status", "unknown")}
