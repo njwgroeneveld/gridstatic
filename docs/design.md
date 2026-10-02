@@ -154,6 +154,27 @@ the oldest buy (its place in the queue) and the newest sell (the one sized to th
 
 Sells are placed **reduce-only**. Whatever the bot believes, a sell can never open a short.
 
+### The price is the mark price
+
+Which lines sit below the price is decided from the mark price, not the mid. On a liquid market
+the two are the same to the tick. On a thin one they are not: on testnet, `xyz:XYZ100` had one
+ask and four bids, a 9% spread and $21 of daily volume, and its mid sat 3.5% above the mark.
+Worse, a grid's own buys become the best bid, which moves the mid up, which lets the next round
+place a buy one line higher — the grid would chase its own orders toward the ask. The mark price
+is anchored to the oracle and does not move with the bot.
+
+### HIP-3 markets
+
+Markets on builder-deployed perp dexes carry the dex in their name (`xyz:XYZ100`). Everything
+the bot reads about such a coin — lot size, mark price, open orders, the position, the balance —
+comes from that dex, and the SDK has to be told the dex exists before it can turn the name into
+an asset id. The chart derives the dexes from the configured coins. Each dex has its own
+balance, so the margin check reads the coin's own.
+
+Not yet seen on real data: whether `userFills` returns fills from HIP-3 markets. If it does not,
+the bot cannot tie a filled buy to its cell, the position stops adding up, and the grid holds —
+safe, but it does not trade. The first testnet run checks this.
+
 ### No buy on the top line, none near the price
 
 The top line has no line above it for the sell. And a buy within a tenth of a spacing below the

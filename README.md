@@ -23,6 +23,7 @@ it reads the exchange and repairs the difference with the grid you configured.
 - [Quick start](#quick-start)
 - [Manual installation](#manual-installation)
 - [Configuration](#configuration)
+- [Stocks and indices: HIP-3 markets](#stocks-and-indices-hip-3-markets)
 - [When the grid holds](#when-the-grid-holds)
 - [Going to mainnet](#going-to-mainnet)
 - [Checking a running grid](#checking-a-running-grid)
@@ -51,7 +52,9 @@ lines. Each pair of neighbouring lines is a **cell**: buy on the lower line, sel
  75,000 ─────────────────────────  line 0    ← resting buy of cell 0
 ```
 
-- Every empty cell below the price gets a **buy**.
+- Every empty cell below the price gets a **buy**. "The price" is the mark price, not the
+  mid: on a thin book the mid is the middle of an empty spread, and the grid's own buys would
+  move it.
 - When a buy fills, its cell gets a **sell** one line up.
 - When that sell fills, the cell is empty again and gets its buy back.
 - Every completed cycle earns the distance between two lines, minus fees.
@@ -286,6 +289,9 @@ value and warns if the account cannot carry it.
 | a grid says `shadow: true` | shadow mode is gone; starting would place real orders for a grid you believe is simulated |
 | `startBalance` is missing | it sizes every order; there is no safe default |
 
+`grid.coins` has no default: the chart refuses to install without an active grid. That is on
+purpose — Helm merges maps, so a default grid would quietly run next to the ones in your file.
+
 ### Other settings
 
 | key | default | |
@@ -312,6 +318,42 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 > carry a different fingerprint: the bot leaves them alone, but it also holds — its position no
 > longer adds up. Cancel the old orders and close or keep the old position deliberately before
 > you change them. Changing `allocationPct` or `startBalance` is safe; it applies to new orders.
+
+---
+
+## Stocks and indices: HIP-3 markets
+
+Hyperliquid also lists markets deployed by third parties on perp dexes of their own (HIP-3) —
+the Nasdaq-100, single stocks, commodities. Their names carry the dex: `xyz:XYZ100` is the
+Nasdaq-100 on the `xyz` dex. Use that full name, quoted:
+
+```yaml
+grid:
+  coins:
+    NDX-20:
+      coin: "xyz:XYZ100"
+      active: true
+      allocationPct: 100
+      upper: 32000
+      lower: 29000
+      numLines: 20
+      leverage: 1
+```
+
+The chart passes the dex on to the connector; nothing else to configure. Three things differ
+from a regular market:
+
+- **Each HIP-3 dex keeps its own balance.** USDC on your regular perps account does not margin
+  an `xyz` position. Move USDC to that dex first — a `sendAsset` transfer to it, or enable dex
+  abstraction so the account shares collateral across dexes. The startup margin check reads the
+  balance of the coin's own dex and warns if it is short.
+- **Check the market on the network you use.** A market can be busy on mainnet and nearly empty
+  on testnet. On testnet a grid there mostly tests the plumbing: with no one trading, its orders
+  rarely fill.
+- **Look at the market's own rules** in its listing — maximum leverage, isolated-only, trading
+  hours — before you pick a leverage.
+
+`tools/gridcheck.py` handles HIP-3 coins the same way.
 
 ---
 
@@ -478,7 +520,7 @@ install.sh                   one-command installer
 docs/design.md               design decisions and the incidents behind them
 ```
 
-Run the tests (159 in total):
+Run the tests (178 in total):
 
 ```bash
 for s in grid-static connector telegram-alerter; do
