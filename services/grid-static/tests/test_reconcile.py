@@ -60,7 +60,7 @@ def test_incident_1_unexplained_position_blocks_every_buy():
     p = run(orders=resting_buys(0, 1, 2, 4, 5), position=0.38)
     assert p.hold is not None
     assert buys(p) == {}
-    assert p.alerts
+    assert not sells(p)              # nothing tells which cell the coin is in
 
 
 def test_a_filled_buy_found_in_the_fills_gets_its_sell_not_a_new_buy():

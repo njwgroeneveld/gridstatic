@@ -1,27 +1,43 @@
+import itertools
+
 import pytest
 from unittest.mock import AsyncMock
 
+# A small grid: lines 100, 110, ..., 200 -- 11 lines, 10 cells. $550 over 11
+# lines at 1x is $50 a line, so a full buy on cell 3 (130) is 0.38 coin.
+START_MS = 1_800_000_000_000
+
 
 @pytest.fixture
-def dal():
-    m = AsyncMock()
-    m.insert_grid_config.return_value = {"id": 1, "coin": "BTC"}
-    m.get_active_configs.return_value = [{"id": 1, "coin": "BTC"}]
-    m.insert_grid_order.return_value = {"id": 10, "level": 0}
-    m.get_open_orders.return_value = []
-    m.get_open_trades.return_value = []
-    m.get_closed_trades.return_value = []
-    return m
+def config():
+    return {
+        "coin": "BTC",
+        "active": True,
+        "allocation_pct": 100,
+        "upper": 200,
+        "lower": 100,
+        "num_lines": 11,
+        "leverage": 1,
+    }
 
 
 @pytest.fixture
 def connector():
     m = AsyncMock()
-    m.get_mids.return_value = {"BTC": 63000.0, "SOL": 75.0}
-    m.get_account_value.return_value = 10000.0
-    m.place_buy_limit.return_value = {"status": "ok", "hl_order_id": "abc123", "sz_coin": 0.01}
-    m.place_sell_limit.return_value = {"status": "ok", "hl_order_id": "def456"}
     m.get_open_orders.return_value = []
+    m.get_positions.return_value = {}
+    m.get_mids.return_value = {"BTC": 155.0}
+    m.get_fills.return_value = []
+    m.get_sz_decimals.return_value = 2
+    m.get_account_value.return_value = 10_000.0
+    m.cancel_order.return_value = {"status": "ok"}
+    m.get_order_status.return_value = {"oid": 0, "cloid": None, "status": "unknownOid"}
+    oids = itertools.count(500)
+
+    async def place(coin, is_buy, price, sz, cloid, reduce_only):
+        return {"status": "ok", "oid": next(oids), "cloid": cloid, "sz": sz, "px": price}
+
+    m.place_limit.side_effect = place
     return m
 
 
@@ -30,56 +46,23 @@ def alerter():
     return AsyncMock()
 
 
-@pytest.fixture
-def config():
-    return {
-        "coin": "BTC",
-        "active": True,
-        "shadow": True,
-        "allocation_pct": 100,
-        "upper": 68000,
-        "lower": 57000,
-        "num_lines": 10,
-        "leverage": 1,
-    }
+class Clock:
+    """Seconds since the epoch, moved by hand."""
+
+    def __init__(self, ms: int) -> None:
+        self.ms = ms
+
+    def __call__(self) -> float:
+        return self.ms / 1000
 
 
 @pytest.fixture
-def grid(dal, connector, alerter, config):
+def clock():
+    return Clock(START_MS)
+
+
+@pytest.fixture
+def grid(config, connector, alerter, clock):
     from src.strategy import StaticGrid
-    return StaticGrid(
-        coin_key="BTC-10",
-        config=config,
-        strategy_allocation_pct=80,
-        dal=dal,
-        connector=connector,
-        alerter=alerter,
-    )
-
-
-@pytest.fixture
-def live_config():
-    return {
-        "coin": "BTC",
-        "active": True,
-        "shadow": False,
-        "allocation_pct": 100,
-        "upper": 68000,
-        "lower": 57000,
-        "num_lines": 10,
-        "leverage": 1,
-    }
-
-
-@pytest.fixture
-def live_grid(dal, connector, alerter, live_config):
-    from src.strategy import StaticGrid
-    return StaticGrid(
-        coin_key="BTC-10",
-        config=live_config,
-        strategy_allocation_pct=80,
-        dal=dal,
-        connector=connector,
-        alerter=alerter,
-    )
-
+    return StaticGrid("BTC-11", config, strategy_allocation_pct=100, start_balance=550,
+                      connector=connector, alerter=alerter, clock=clock)

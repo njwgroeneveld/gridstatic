@@ -1,601 +1,345 @@
+"""One static grid: read the exchange, let reconcile decide, act, report.
+
+There is no record of its own. Every round starts from what the exchange says
+-- open orders, the position, recent fills -- so a restart is just another
+round. The only memory is a cache of which cloid each order id carried; losing
+it costs a few lookups, never a wrong decision.
+"""
+
 import asyncio
 import logging
-import random
 import time
-from datetime import datetime, timezone
+from dataclasses import asdict
 
-from shared.base_strategy import BaseStrategy
-from shared.dal_client import DALClient
-from shared.connector_client import ConnectorClient
-from shared.alerter_client import AlerterClient
-from src.grid_math import calculate_levels, calculate_size_usd, get_buy_levels, find_level_index
-from src.alert_throttle import OutsideGridThrottle
 from src import metrics
+from src.alert_throttle import OutsideGridThrottle
+from src.cloid import BUY, SELL, decode, encode, fingerprint
+from src.grid_math import calculate_levels, calculate_size_usd
+from src.reconcile import Plan, TaggedFill, plan
 
 log = logging.getLogger(__name__)
 
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
+MIN_NOTIONAL = 10.0                 # Hyperliquid refuses orders below $10
+_LOOKUPS_PER_ROUND = 50             # order-status calls to tie fills to cells
+_REPEAT_MS = 60 * 60 * 1000         # a standing hold or notice is repeated hourly
+_DAY_MS = 24 * 60 * 60 * 1000
 
 
-MAKER_FEE_RATE = 0.00015  # Hyperliquid maker: 0.0150%
-
-
-def _sz_coin(size_usd: float, leverage: float, price: float) -> float:
-    """Order size in coin. Leverage multiplies the position -- the leverage
-    setting on the exchange only lowers the margin requirement, it does not
-    size anything -- so notional is size_usd * leverage, matching how
-    _calc_profit accounts for a leveraged line."""
-    return round(size_usd * leverage / price, 6)
-
-
-def _modelled_fee(size_usd: float, leverage: float) -> float:
-    """Shadow has no fill to read a fee off, so model it at the maker rate:
-    grid orders rest away from the market and are practically always maker."""
-    return round(size_usd * leverage * MAKER_FEE_RATE, 6)
-
-
-async def _occupied_levels(dal: DALClient, coin: str, grid_config_id: int) -> set[int]:
-    """Grid lines that must not be bought again -- two kinds, and the second is
-    the one that used to slip through.
-
-    A line with a resting order is obviously taken. A line whose buy already
-    filled is just as taken: it holds a position waiting on its sell one level
-    up. It leaves no resting order behind, though, so looking only at open
-    orders makes it read as free, and the health loop re-buys it every cycle.
-
-    Matched on the level, never on the price. The connector rounds every limit
-    price to five significant digits, the exchange fills at a price of its own,
-    and a partial fill averages the entry across pieces -- so a trade's
-    buy_price never equals its grid line on a live grid. In shadow it does,
-    since no exchange is involved, which is why a price match held up there for
-    months while stacking positions on the live grid.
-    """
-    orders = await dal.get_open_orders(coin)
-    levels = {o["level"] for o in orders if o.get("grid_config_id") == grid_config_id}
-    for trade in await dal.get_open_trades(coin, grid_config_id):
-        if trade.get("buy_level") is not None:
-            levels.add(trade["buy_level"])
-    return levels
-
-
-class StaticGrid(BaseStrategy):
+class StaticGrid:
     def __init__(self, coin_key: str, config: dict, strategy_allocation_pct: float,
-                 dal: DALClient, connector: ConnectorClient, alerter: AlerterClient,
-                 fill_interval: int = 5, health_interval: int = 30,
-                 start_balance: float = 10000.0) -> None:
+                 start_balance: float, connector, alerter, *, interval: float = 30,
+                 lookback_hours: float = 72, clock=time.time) -> None:
         self.coin_key = coin_key
-        self.coin = config["coin"]
         self.config = config
-        self.strategy_allocation_pct = strategy_allocation_pct
-        self.shadow: bool = config.get("shadow", True)
-        self.dal = dal
+        self.coin = config["coin"]
+        self.leverage = float(config.get("leverage", 1))
+        self.levels = calculate_levels(config["lower"], config["upper"], config["num_lines"])
+        self.fp = fingerprint(self.coin, config["lower"], config["upper"],
+                              config["num_lines"], self.leverage)
+        # Fixed per line, no compounding: the profit since the start is not
+        # something the exchange can tell once its fill history has rolled over.
+        self.size_usd = calculate_size_usd(start_balance, strategy_allocation_pct,
+                                           config["allocation_pct"], config["num_lines"])
         self.connector = connector
         self.alerter = alerter
-        self.fill_interval = fill_interval
-        self.health_interval = health_interval
-        self.start_balance = start_balance
-        self.levels: list[float] = []
-        self.grid_config_id: int | None = None
-        self.last_fill_ms: int = _now_ms()
-        self._last_shadow_price: float | None = None
-        self._last_error_alert_ms: int = 0
-        self._outside_throttle = OutsideGridThrottle()
-        self._edge_throttle = OutsideGridThrottle()
+        self.interval = interval
+        self.lookback_ms = int(lookback_hours * 3600 * 1000)
+        self._clock = clock
+        self.sz_decimals: int | None = None
 
-    # ── Initialization ────────────────────────────────────────────────────────
+        self._cloid_of: dict[int, str | None] = {}
+        self._announced_until_ms = self._now_ms()
+        self._hold: str | None = None
+        self._hold_alerted_ms = 0
+        self._notice_alerted_ms: dict[str, int] = {}
+        self._outside = OutsideGridThrottle()
+        self._edge = OutsideGridThrottle()
 
-    async def initialize(self) -> None:
-        log.info(f"[{self.coin_key}] Initialising grid (shadow={self.shadow})")
-        mids = await self.connector.get_mids()
-        current_price = mids[self.coin]
+        self.last_plan: Plan | None = None
+        self.last_round_ms: int | None = None
+        self.last_price: float | None = None
+        self.last_position: float | None = None
+        self.realized_24h = 0.0
 
-        balance = self.start_balance
-        size_usd = calculate_size_usd(
-            balance=balance,
-            strategy_pct=self.strategy_allocation_pct,
-            coin_pct=self.config["allocation_pct"],
-            num_lines=self.config["num_lines"],
-        )
+    def _now_ms(self) -> int:
+        return int(self._clock() * 1000)
 
-        self.levels = calculate_levels(
-            lower=self.config["lower"],
-            upper=self.config["upper"],
-            num_lines=self.config["num_lines"],
-        )
+    def _label(self) -> dict:
+        lev = int(self.leverage) if self.leverage.is_integer() else self.leverage
+        return {"coin": self.coin, "num_lines": self.config["num_lines"], "leverage": lev}
 
-        cfg = await self.dal.insert_grid_config({
-            "coin": self.coin,
-            "strategy": "STATIC",
-            "upper": self.config["upper"],
-            "lower": self.config["lower"],
-            "num_lines": self.config["num_lines"],
-            "leverage": self.config.get("leverage", 1),
-            "shadow": self.shadow,
-            "active": True,
-        })
-        self.grid_config_id = cfg["id"]
+    # ── Starting up ───────────────────────────────────────────────────────────
 
-        if not self.shadow:
-            await self.connector.set_leverage(self.coin, int(self.config.get("leverage", 1)))
-
-        buy_levels = get_buy_levels(self.levels, current_price)
-        for level_price in buy_levels:
-            level_idx = find_level_index(self.levels, level_price)
-            await self._place_buy(level_idx, level_price, size_usd)
-
-        await self.alerter.send_alert("grid_initialized", {
-            "coin": self.coin, "lower": self.config["lower"],
-            "upper": self.config["upper"], "num_lines": self.config["num_lines"],
-            "shadow": self.shadow,
-        })
-        log.info(f"[{self.coin_key}] Grid ready — {len(buy_levels)} BUY orders placed")
-
-    async def _place_buy(self, level_idx: int, price: float, size_usd: float) -> dict | None:
-        t0 = time.time()
-        exchange_oid = None
-        sz_coin = None
-
-        if not self.shadow:
-            result = await self.connector.place_buy_limit(
-                coin=self.coin, price=price, size_usd=size_usd,
-                leverage=int(self.config.get("leverage", 1))
-            )
-            if result.get("status") != "ok":
-                log.error(f"[{self.coin_key}] BUY order failed at {price}: {result}")
-                metrics.grid_errors_total.labels(type="order_placement").inc()
-                return None
-            exchange_oid = result.get("hl_order_id")
-            sz_coin = result.get("sz_coin")
-            metrics.grid_order_placement_latency.labels(coin=self.coin).observe(time.time() - t0)
-
-        order = await self.dal.insert_grid_order({
-            "grid_config_id": self.grid_config_id,
-            "coin": self.coin,
-            "strategy": "STATIC",
-            "side": "BUY",
-            "level": level_idx,
-            "price": price,
-            "size_usd": size_usd,
-            "exchange_order_id": exchange_oid,
-            "status": "OPEN",
-            "shadow": self.shadow,
-        })
-        metrics.grid_orders_placed_total.labels(coin=self.coin, side="BUY").inc()
-        metrics.grid_active_levels.labels(coin=self.coin).inc()
-
-        if not self.shadow:
-            await self.alerter.send_alert("buy_placed", {
-                "coin": self.coin, "price": price, "level": level_idx, "shadow": False
-            })
-        return order
-
-    async def _place_sell(self, level_idx: int, price: float,
-                          sz_coin: float, size_usd: float) -> dict | None:
-        t0 = time.time()
-        exchange_oid = None
-
-        if not self.shadow:
-            result = await self.connector.place_sell_limit(self.coin, sz_coin, price)
-            if result.get("status") != "ok":
-                log.error(f"[{self.coin_key}] SELL order failed at {price}: {result}")
-                metrics.grid_errors_total.labels(type="order_placement").inc()
-                return None
-            exchange_oid = result.get("hl_order_id")
-            metrics.grid_order_placement_latency.labels(coin=self.coin).observe(time.time() - t0)
-
-        order = await self.dal.insert_grid_order({
-            "grid_config_id": self.grid_config_id,
-            "coin": self.coin,
-            "strategy": "STATIC",
-            "side": "SELL",
-            "level": level_idx,
-            "price": price,
-            "size_usd": size_usd,
-            "exchange_order_id": exchange_oid,
-            "status": "OPEN",
-            "shadow": self.shadow,
-        })
-        metrics.grid_orders_placed_total.labels(coin=self.coin, side="SELL").inc()
-        return order
-
-    async def _current_size_usd(self) -> float:
-        # Fixed starting capital plus what this grid actually realised -- the same
-        # rule live and in shadow, so the two stay comparable. Deliberately not the
-        # live account value: that moves with unrealised P&L, so lines would shrink
-        # exactly while the grid is buying its way down.
-        trades = await self.dal.get_closed_trades(self.coin, self.grid_config_id)
-        total_profit = sum(float(t.get("profit_usd") or 0) for t in trades)
-        balance = self.start_balance + total_profit
-        return calculate_size_usd(
-            balance=balance,
-            strategy_pct=self.strategy_allocation_pct,
-            coin_pct=self.config["allocation_pct"],
-            num_lines=self.config["num_lines"],
-        )
-
-    # ── State recovery ────────────────────────────────────────────────────────
-
-    async def recover_state(self) -> None:
-        log.info(f"[{self.coin_key}] Recovering state from DAL + exchange")
-        dal_open = await self.dal.get_open_orders(self.coin)
-        if not dal_open:
-            return
-
-        if self.shadow:
-            return  # shadow has no exchange orders to reconcile
-
+    async def start(self) -> None:
+        self.sz_decimals = await self.connector.get_sz_decimals(self.coin)
+        await self.connector.set_leverage(self.coin, int(self.leverage))
+        self._announced_until_ms = self._now_ms()
+        # Tie every recent fill to its cell before the first round, so that round
+        # does not go on hold over fills it simply had not looked up yet.
         try:
-            exchange_orders = await self.connector.get_open_orders(self.coin)
+            fills = await self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms)
+            await self._tie(fills, limit=None)
         except Exception as e:
-            # An unreachable exchange must not read as "the book is empty": every
-            # resting order would look filled, and each one would get a sell
-            # placed against a position that does not exist. Skip reconciling and
-            # let the fill loop report what really happened.
-            log.error(f"[{self.coin_key}] Recovery skipped -- open orders unreadable: {e}")
-            metrics.grid_errors_total.labels(type="recover_state").inc()
+            log.warning(f"[{self.coin_key}] warming the fill cache failed: {e}")
+        await self._check_margin()
+        log.info(f"[{self.coin_key}] started: {len(self.levels)} lines "
+                 f"{self.levels[0]}-{self.levels[-1]}, ${self.size_usd} per line, "
+                 f"{self.leverage:g}x")
+
+    async def _check_margin(self) -> None:
+        """Warn, not refuse: a grid may be set larger than what is free right now."""
+        try:
+            price = float((await self.connector.get_mids())[self.coin])
+            value = await self.connector.get_account_value()
+        except Exception as e:
+            log.warning(f"[{self.coin_key}] margin check skipped: {e}")
             return
-        exchange_oids = {str(o.get("oid", "")) for o in exchange_orders}
+        cells_below = sum(1 for p in self.levels[:-1] if p < price)
+        needed = self.size_usd * cells_below
+        if value < needed:
+            msg = (f"{self.coin_key}: buying every line below {price:g} needs ${needed:,.0f} "
+                   f"margin; the account holds ${value:,.0f}. Orders will be refused once it "
+                   f"runs out -- lower startBalance or add funds.")
+            log.warning(msg)
+            await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
 
-        for order in dal_open:
-            oid = order.get("exchange_order_id")
-            if oid and oid not in exchange_oids:
-                log.info(f"[{self.coin_key}] Missed fill detected for order {order['id']} (oid={oid})")
-                await self._handle_missed_fill(order)
+    # ── Tying fills to cells ──────────────────────────────────────────────────
 
-    async def _handle_missed_fill(self, order: dict) -> None:
-        filled_price = order["price"]
-        await self.dal.patch_order(order["id"], {
-            "status": "FILLED",
-            "filled_price": filled_price,
-            "filled_at": _now_iso(),
-        })
-
-        if order["side"] == "BUY":
-            size_usd = order["size_usd"]
-            leverage = float(self.config.get("leverage", 1))
-            sz_coin = _sz_coin(size_usd, leverage, filled_price)
-            # A missed fill was never observed, so its fee has to be estimated
-            # the same way the fill price is -- better than a NULL that silently
-            # counts as zero when the trade closes.
-            fee_usd = _modelled_fee(size_usd, leverage)
-            trade = await self.dal.insert_grid_trade({
-                "coin": self.coin, "strategy": "STATIC",
-                "buy_order_id": order["id"], "buy_price": filled_price,
-                "size_usd": size_usd, "status": "OPEN", "shadow": False,
-                "fee_usd": fee_usd,
-            })
-            sell_level = order["level"] + 1
-            if sell_level < len(self.levels):
-                sell_price = self.levels[sell_level]
-                sell_order = await self._place_sell(sell_level, sell_price, sz_coin, size_usd)
-                if sell_order:
-                    await self.dal.patch_trade(trade["id"], {"sell_order_id": sell_order["id"]})
-
-    # ── Fill detection loop ───────────────────────────────────────────────────
-
-    async def run_fill_loop(self) -> None:
-        fill_interval = self.fill_interval
-        await asyncio.sleep(random.uniform(0, fill_interval))
-        while True:
-            t0 = time.time()
+    async def _tie(self, fills: list[dict], limit: int | None) -> list[tuple[TaggedFill, dict]]:
+        """Fills only name the order id. Look its cloid up -- from the cache, or
+        from the exchange -- and keep the fills that belong to this grid. A fill
+        that could not be looked up is left out; the position check then puts
+        the round on hold, which is the safe side to err on."""
+        lookups = 0
+        for fill in sorted(fills, key=lambda f: -int(f.get("time", 0))):
+            oid = int(fill["oid"])
+            if oid in self._cloid_of:
+                continue
+            if limit is not None and lookups >= limit:
+                break
+            lookups += 1
             try:
-                if self.shadow:
-                    await self._shadow_fill_check()
-                else:
-                    await self._live_fill_check()
+                status = await self.connector.get_order_status(oid)
             except Exception as e:
-                log.error(f"[{self.coin_key}] Fill loop error: {e}")
-                metrics.grid_errors_total.labels(type="fill_loop").inc()
-                now = _now_ms()
-                if now - self._last_error_alert_ms > 5 * 60 * 1000:
-                    self._last_error_alert_ms = now
-                    await self.alerter.send_alert("error", {"coin": self.coin, "message": str(e)})
-            metrics.grid_fill_loop_duration.observe(time.time() - t0)
-            await asyncio.sleep(fill_interval)
+                log.warning(f"[{self.coin_key}] order status of {oid} unreadable: {e}")
+                break
+            # "unknownOid" may be the exchange not having caught up yet; remembering
+            # it as "not ours" would keep the grid on hold for good.
+            if status.get("status") != "unknownOid":
+                self._cloid_of[oid] = status.get("cloid")
 
-    async def _shadow_fill_check(self) -> None:
-        mids = await self.connector.get_mids()
-        current_price = mids[self.coin]
-        if self._last_shadow_price is None:
-            self._last_shadow_price = current_price
-            return
-
-        all_open = await self.dal.get_open_orders(self.coin)
-        # Filter by this grid's config_id — multiple BTC grids share the same coin
-        # but must only process their own orders
-        my_orders = [o for o in all_open if o.get("grid_config_id") == self.grid_config_id]
-        buy_orders = [o for o in my_orders if o["side"] == "BUY"]
-
-        for order in buy_orders:
-            if self._last_shadow_price > order["price"] >= current_price:
-                sell_order = await self._process_buy_fill(order, order["price"], known_orders=my_orders)
-                if sell_order:
-                    my_orders.append(sell_order)
-
-        sell_orders = [o for o in my_orders if o["side"] == "SELL"]
-        for order in sell_orders:
-            if self._last_shadow_price < order["price"] <= current_price:
-                await self._process_sell_fill(order, order["price"])
-
-        self._last_shadow_price = current_price
-
-    async def _live_fill_check(self) -> None:
-        since = self.last_fill_ms
-        now = _now_ms()
-        fills = await self.connector.get_fills(self.coin, since)
-        # Watermark moves only once the fills are in hand. Advancing it first meant
-        # a failed call silently dropped that whole window, and those fills were
-        # never looked at again -- they resurfaced as "missed fills" on the next
-        # restart, booked at the line price instead of what they really filled at.
-        self.last_fill_ms = now
-
-        open_orders = await self.dal.get_open_orders(self.coin)
-        oid_to_order = {o["exchange_order_id"]: o for o in open_orders if o.get("exchange_order_id")}
-
+        tied = []
         for fill in fills:
-            oid = str(fill.get("oid", ""))
-            order = oid_to_order.get(oid)
-            if not order:
+            tag = decode(self._cloid_of.get(int(fill["oid"])))
+            if tag is None or tag.fingerprint != self.fp:
                 continue
-            filled_price = float(fill.get("px", order["price"]))
-            metrics.grid_fills_total.labels(coin=self.coin, side=order["side"]).inc()
+            tied.append((TaggedFill(cell=tag.cell, side=tag.side, sz=float(fill["sz"]),
+                                    time=int(fill["time"])), fill))
+        return tied
 
-            if order["side"] == "BUY":
-                sell_order = await self._process_buy_fill(order, filled_price,
-                                                          known_orders=open_orders, fill=fill)
-                if sell_order:
-                    open_orders.append(sell_order)
-            elif order["side"] == "SELL":
-                await self._process_sell_fill(order, filled_price, fill=fill)
+    # ── One round ─────────────────────────────────────────────────────────────
 
-    async def _cancel_existing_sell(self, trade: dict) -> None:
-        """A later piece of the same buy order grew the position, so the sell that
-        covered the first piece is now too small. Pull it before the bigger one
-        goes out, otherwise the surplus sits there with no exit."""
-        sell_id = trade.get("sell_order_id")
-        if not sell_id:
-            return
-        rows = await self.dal.get_open_orders(self.coin)
-        sell = next((o for o in rows if o["id"] == sell_id), None)
-        if sell is None:
-            return
-        if not self.shadow and sell.get("exchange_order_id"):
+    async def run_round(self) -> Plan | None:
+        t0 = time.time()
+        try:
+            orders = await self.connector.get_open_orders(self.coin)
+            positions = await self.connector.get_positions()
+            price = float((await self.connector.get_mids())[self.coin])
+            fills = await self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms)
+        except Exception as e:
+            # An exchange that cannot be read is never an empty exchange: act on
+            # nothing until it answers again.
+            log.error(f"[{self.coin_key}] round skipped, exchange unreadable: {e}")
+            metrics.grid_errors_total.labels(type="read").inc()
+            return None
+
+        position = float((positions.get(self.coin) or {}).get("szi", 0.0))
+        for o in orders:
+            if o.get("oid") is not None:
+                self._cloid_of[int(o["oid"])] = o.get("cloid")
+        tied = await self._tie(fills, limit=_LOOKUPS_PER_ROUND)
+
+        p = plan(levels=self.levels, fp=self.fp, orders=orders,
+                 fills=[t for t, _ in tied], position=position, price=price,
+                 size_usd=self.size_usd, leverage=self.leverage,
+                 sz_decimals=self.sz_decimals, min_notional=MIN_NOTIONAL)
+        await self._execute(p)
+        await self._report(p, tied, price)
+
+        self.last_plan, self.last_price, self.last_position = p, price, position
+        self.last_round_ms = self._now_ms()
+        metrics.grid_round_duration.observe(time.time() - t0)
+        return p
+
+    async def _execute(self, p: Plan) -> None:
+        failed_cancels: set[int] = set()
+        for c in p.cancels:
             try:
-                await self.connector.cancel_order(self.coin, sell["exchange_order_id"])
+                await self.connector.cancel_order(self.coin, c.oid)
+                log.info(f"[{self.coin_key}] cancelled {c.side} on cell {c.cell}: {c.reason}")
             except Exception as e:
-                log.error(f"[{self.coin_key}] could not cancel sell order {sell_id}: {e}")
+                failed_cancels.add(c.oid)
+                log.error(f"[{self.coin_key}] cancel of {c.oid} failed: {e}")
                 metrics.grid_errors_total.labels(type="order_cancel").inc()
-                return
-        await self.dal.patch_order(sell_id, {"status": "CANCELLED"})
 
-    async def _process_buy_fill(self, order: dict, filled_price: float,
-                                known_orders: list[dict] | None = None,
-                                fill: dict | None = None) -> dict | None:
-        leverage = float(self.config.get("leverage", 1))
-        if fill:
-            sz = float(fill["sz"])
-            px = float(fill.get("px", filled_price))
-            fee = float(fill["fee"])
-        else:
-            sz = _sz_coin(order["size_usd"], leverage, filled_price)
-            px = filled_price
-            fee = _modelled_fee(order["size_usd"], leverage)
-
-        await self.dal.patch_order(order["id"], {
-            "status": "FILLED",
-            "filled_price": px,
-            "filled_at": _now_iso(),
-        })
-
-        # An exchange splits a limit order into as many fills as it likes, and each
-        # piece arrives separately. Keep one trade per buy order and grow it, or every
-        # extra piece becomes inventory that nothing ever sells.
-        open_trades = await self.dal.get_open_trades(self.coin)
-        trade = next((t for t in open_trades if t.get("buy_order_id") == order["id"]), None)
-
-        notional = sz * px
-        if trade:
-            previous = float(trade["size_usd"]) * leverage
-            sz += previous / float(trade["buy_price"])
-            notional += previous
-            fee = round(float(trade.get("fee_usd") or 0) + fee, 6)
-            px = notional / sz  # volume-weighted entry across all pieces
-            await self.dal.patch_trade(trade["id"], {
-                "buy_price": px,
-                "size_usd": round(notional / leverage, 2),
-                "fee_usd": fee,
-            })
-            await self._cancel_existing_sell(trade)
-        else:
-            metrics.grid_active_levels.labels(coin=self.coin).dec()
-            trade = await self.dal.insert_grid_trade({
-                "coin": self.coin, "strategy": "STATIC",
-                "buy_order_id": order["id"], "buy_price": px,
-                "size_usd": round(notional / leverage, 2),
-                "status": "OPEN", "shadow": self.shadow, "fee_usd": fee,
-            })
-            metrics.grid_open_trades.labels(coin=self.coin).inc()
-
-        await self.dal.patch_order(order["id"], {"fee_usd": fee})
-
-        sz = round(sz, 6)
-        size_usd = round(notional / leverage, 2)
-        sell_order = None
-        sell_level = order["level"] + 1
-        # No "is this level already covered" check any more: two different buy
-        # orders can legitimately both exit one level up, and skipping the second
-        # was exactly what left positions without a sell.
-        if sell_level < len(self.levels):
-            sell_price = self.levels[sell_level]
-            sell_order = await self._place_sell(sell_level, sell_price, sz, size_usd)
-            if sell_order:
-                await self.dal.patch_trade(trade["id"], {"sell_order_id": sell_order["id"]})
-
-        await self.alerter.send_alert("buy_filled", {
-            "coin": self.coin,
-            "num_lines": self.config["num_lines"],
-            "leverage": self.config.get("leverage", 1),
-            "filled_price": px,
-            "sell_price": self.levels[sell_level] if sell_level < len(self.levels) else 0,
-            "shadow": self.shadow,
-        })
-        return sell_order
-
-    async def _process_sell_fill(self, order: dict, filled_price: float,
-                                 fill: dict | None = None) -> None:
-        await self.dal.patch_order(order["id"], {
-            "status": "FILLED",
-            "filled_price": filled_price,
-            "filled_at": _now_iso(),
-        })
-
-        open_trades = await self.dal.get_open_trades(self.coin)
-        trade = next((t for t in open_trades if t.get("sell_order_id") == order["id"]), None)
-
-        profit_usd = 0.0
-        buy_price = 0.0
-        leverage = self.config.get("leverage", 1)
-        if trade:
-            buy_price = trade.get("buy_price", 0)
-            size_usd = trade.get("size_usd", 0)
-            sell_fee = float(fill["fee"]) if fill else _modelled_fee(size_usd, leverage)
-            await self.dal.patch_order(order["id"], {"fee_usd": sell_fee})
-            # trade.fee_usd already carries the buy-side fee.
-            fee_usd = round(float(trade.get("fee_usd") or 0) + sell_fee, 6)
-            if buy_price > 0:
-                gross = (filled_price - buy_price) / buy_price * size_usd * leverage
-                profit_usd = round(gross - fee_usd, 2)
-            await self.dal.patch_trade(trade["id"], {
-                "sell_price": filled_price,
-                "profit_usd": profit_usd,
-                "fee_usd": fee_usd,
-                "status": "CLOSED",
-                "closed_at": _now_iso(),
-            })
-            metrics.grid_trades_closed_total.labels(coin=self.coin).inc()
-            metrics.grid_open_trades.labels(coin=self.coin).dec()
-            metrics.grid_profit_usd.labels(coin=self.coin).inc(profit_usd)
-
-        buy_level = order["level"] - 1
-        if buy_level >= 0 and buy_level not in await _occupied_levels(
-                self.dal, self.coin, self.grid_config_id):
-            buy_price_new = self.levels[buy_level]
-            size_usd = await self._current_size_usd()
-            await self._place_buy(buy_level, buy_price_new, size_usd)
-
-        await self.alerter.send_alert("trade_closed", {
-            "coin": self.coin,
-            "num_lines": self.config["num_lines"],
-            "leverage": self.config.get("leverage", 1),
-            "buy_price": buy_price,
-            "sell_price": filled_price,
-            "profit_usd": profit_usd,
-            "shadow": self.shadow,
-        })
-
-    # ── Health check loop ─────────────────────────────────────────────────────
-
-    async def run_health_loop(self) -> None:
-        health_interval = self.health_interval
-        await asyncio.sleep(random.uniform(0, health_interval))
-        while True:
+        for pl in p.places:
+            if pl.replaces is not None and pl.replaces in failed_cancels:
+                # Placing it anyway would leave the cell with two sells.
+                log.warning(f"[{self.coin_key}] cell {pl.cell}: bigger sell held back, "
+                            f"the old one could not be cancelled")
+                continue
+            cloid = encode(self.fp, pl.cell, pl.side)
             t0 = time.time()
             try:
-                await self._health_check()
+                res = await self.connector.place_limit(
+                    self.coin, is_buy=pl.side == BUY, price=pl.price, sz=pl.sz,
+                    cloid=cloid, reduce_only=pl.reduce_only)
             except Exception as e:
-                log.error(f"[{self.coin_key}] Health loop error: {e}")
-                metrics.grid_errors_total.labels(type="health_loop").inc()
-            metrics.grid_health_loop_duration.observe(time.time() - t0)
-            await asyncio.sleep(health_interval)
-
-    async def _record_funding(self) -> None:
-        """Funding is charged hourly on the net position, moves every hour and can
-        even flip sign, so it is read from the exchange rather than modelled.
-        Shadow holds no position to be charged on and stays out of this."""
-        if self.shadow:
-            return
-        try:
-            since = await self.dal.get_last_funding_ms(self.coin, False)
-            if since is None:
-                since = _now_ms() - 7 * 24 * 3600 * 1000
-            for rec in await self.connector.get_funding(since + 1):
-                if rec["coin"] != self.coin:
-                    continue
-                rec["grid_config_id"] = self.grid_config_id
-                rec["shadow"] = False
-                await self.dal.insert_grid_funding(rec)
-        except Exception as e:
-            log.warning(f"[{self.coin_key}] updating funding failed: {e}")
-
-    async def _health_check(self) -> None:
-        await self._record_funding()
-        mids = await self.connector.get_mids()
-        price = mids.get(self.coin, 0)
-        lower = self.config["lower"]
-        upper = self.config["upper"]
-
-        if self.levels:
-            pct_from_lower = (price - lower) / lower * 100
-            pct_from_upper = (upper - price) / upper * 100
-            metrics.grid_price_vs_lower.labels(coin=self.coin).set(pct_from_lower)
-            metrics.grid_price_vs_upper.labels(coin=self.coin).set(pct_from_upper)
-
-        spacing = (upper - lower) / (self.config["num_lines"] - 1) if self.config["num_lines"] > 1 else 0
-
-        num_lines = self.config["num_lines"]
-        leverage = self.config.get("leverage", 1)
-
-        if price < lower:
-            if self._outside_throttle.should_alert("bottom"):
-                await self.alerter.send_alert("outside_grid", {
-                    "coin": self.coin, "price": price, "bound": lower, "side": "bottom",
-                    "num_lines": num_lines, "leverage": leverage,
-                })
-            self._edge_throttle.clear("bottom")
-        else:
-            self._outside_throttle.clear("bottom")
-            if price - lower < spacing:
-                if self._edge_throttle.should_alert("bottom"):
-                    await self.alerter.send_alert("edge_warning", {
-                        "coin": self.coin, "side": "bottom", "level_price": lower,
-                        "num_lines": num_lines, "leverage": leverage,
-                    })
-            else:
-                self._edge_throttle.clear("bottom")
-
-        if price > upper:
-            if self._outside_throttle.should_alert("top"):
-                await self.alerter.send_alert("outside_grid", {
-                    "coin": self.coin, "price": price, "bound": upper, "side": "top",
-                    "num_lines": num_lines, "leverage": leverage,
-                })
-            self._edge_throttle.clear("top")
-        else:
-            self._outside_throttle.clear("top")
-            if upper - price < spacing:
-                if self._edge_throttle.should_alert("top"):
-                    await self.alerter.send_alert("edge_warning", {
-                        "coin": self.coin, "side": "top", "level_price": upper,
-                        "num_lines": num_lines, "leverage": leverage,
-                    })
-            else:
-                self._edge_throttle.clear("top")
-
-        await self._backfill_missing_buy_orders(price)
-
-    async def _backfill_missing_buy_orders(self, price: float) -> None:
-        if not self.levels or self.grid_config_id is None:
-            return
-        occupied = await _occupied_levels(self.dal, self.coin, self.grid_config_id)
-        size_usd = await self._current_size_usd()
-        for idx, level_price in enumerate(self.levels):
-            if level_price >= price or idx in occupied:
+                log.error(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} "
+                          f"(cell {pl.cell}) failed: {e}")
+                metrics.grid_errors_total.labels(type="order_placement").inc()
                 continue
-            log.info(f"[{self.coin_key}] Backfilling missing BUY at level {idx} (${level_price})")
-            await self._place_buy(idx, level_price, size_usd)
+            if res.get("oid") is not None:
+                self._cloid_of[int(res["oid"])] = cloid
+            log.info(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} (cell {pl.cell})")
+            metrics.grid_orders_placed_total.labels(coin=self.coin, side=pl.side).inc()
+            metrics.grid_order_placement_latency.labels(coin=self.coin).observe(time.time() - t0)
+
+    # ── Reporting ─────────────────────────────────────────────────────────────
+
+    async def _report(self, p: Plan, tied: list[tuple[TaggedFill, dict]], price: float) -> None:
+        now = self._now_ms()
+
+        if p.hold and (self._hold is None or now - self._hold_alerted_ms >= _REPEAT_MS):
+            log.warning(f"[{self.coin_key}] on hold: {p.hold}")
+            await self.alerter.send_alert("grid_hold", {**self._label(), "reason": p.hold})
+            self._hold_alerted_ms = now
+        elif p.hold is None and self._hold is not None:
+            log.info(f"[{self.coin_key}] hold cleared")
+            await self.alerter.send_alert("hold_cleared", self._label())
+        self._hold = p.hold
+
+        for msg in p.alerts:
+            if now - self._notice_alerted_ms.get(msg, -_REPEAT_MS) >= _REPEAT_MS:
+                await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
+                self._notice_alerted_ms[msg] = now
+
+        await self._announce_fills(tied)
+        self.realized_24h = round(sum(
+            self._cycle(t, f, tied)[1] or 0.0 for t, f in tied
+            if t.side == SELL and t.time >= now - _DAY_MS), 2)
+        await self._report_price(price)
+
+        metrics.grid_on_hold.labels(coin=self.coin).set(1 if p.hold else 0)
+        metrics.grid_active_levels.labels(coin=self.coin).set(
+            sum(1 for c in p.cells if c.state == "buy"))
+        metrics.grid_open_trades.labels(coin=self.coin).set(
+            sum(1 for c in p.cells if c.state in ("sell", "unsold")))
+
+    async def _announce_fills(self, tied: list[tuple[TaggedFill, dict]]) -> None:
+        """Only fills since the start: after a restart the history is still on the
+        exchange, and announcing it again would be noise."""
+        new = sorted(((t, f) for t, f in tied if t.time > self._announced_until_ms),
+                     key=lambda x: x[0].time)
+        for t, f in new:
+            px = float(f["px"])
+            metrics.grid_fills_total.labels(coin=self.coin, side=t.side).inc()
+            if t.side == BUY:
+                await self.alerter.send_alert("buy_filled", {
+                    **self._label(), "filled_price": px, "sell_price": self.levels[t.cell + 1]})
+            else:
+                buy_px, profit = self._cycle(t, f, tied)
+                if profit is None:
+                    profit = round(float(f.get("closedPnl") or 0) - float(f.get("fee") or 0), 2)
+                await self.alerter.send_alert("trade_closed", {
+                    **self._label(), "buy_price": buy_px or 0.0, "sell_price": px,
+                    "profit_usd": profit})
+                metrics.grid_trades_closed_total.labels(coin=self.coin).inc()
+                metrics.grid_profit_usd.labels(coin=self.coin).inc(profit)
+        if new:
+            self._announced_until_ms = new[-1][0].time
+
+    @staticmethod
+    def _cycle(sell: TaggedFill, raw: dict,
+               tied: list[tuple[TaggedFill, dict]]) -> tuple[float | None, float | None]:
+        """Buy price and profit of one sell fill: the run of buys in the same cell
+        that this sell closes, at their volume-weighted price, with both sides'
+        fees. A sell that comes in pieces shares that run in proportion."""
+        run_sz = run_cost = run_fee = 0.0
+        prev_side = None
+        own = sorted((x for x in tied if x[0].cell == sell.cell and x[0].time <= sell.time),
+                     key=lambda x: x[0].time)
+        for t, f in own:
+            if t.side == BUY:
+                if prev_side == SELL:
+                    run_sz = run_cost = run_fee = 0.0
+                run_sz += t.sz
+                run_cost += t.sz * float(f["px"])
+                run_fee += float(f.get("fee") or 0)
+            prev_side = t.side
+        if run_sz <= 0:
+            return None, None
+        buy_px = run_cost / run_sz
+        share = min(1.0, sell.sz / run_sz)
+        profit = ((float(raw["px"]) - buy_px) * sell.sz
+                  - float(raw.get("fee") or 0) - run_fee * share)
+        return round(buy_px, 8), round(profit, 2)
+
+    async def _report_price(self, price: float) -> None:
+        lower, upper = self.levels[0], self.levels[-1]
+        spacing = self.levels[1] - self.levels[0]
+        metrics.grid_price_vs_lower.labels(coin=self.coin).set((price - lower) / lower * 100)
+        metrics.grid_price_vs_upper.labels(coin=self.coin).set((upper - price) / upper * 100)
+        for side, outside, near, bound in (("bottom", price < lower, price - lower < spacing, lower),
+                                           ("top", price > upper, upper - price < spacing, upper)):
+            if outside:
+                if self._outside.should_alert(side):
+                    await self.alerter.send_alert("outside_grid", {
+                        **self._label(), "price": price, "bound": bound, "side": side})
+                self._edge.clear(side)
+                continue
+            self._outside.clear(side)
+            if near:
+                if self._edge.should_alert(side):
+                    await self.alerter.send_alert("edge_warning", {
+                        **self._label(), "side": side, "level_price": bound})
+            else:
+                self._edge.clear(side)
+
+    # ── The loop and /status ──────────────────────────────────────────────────
+
+    async def run_loop(self) -> None:
+        while True:
+            try:
+                await self.start()
+                break
+            except Exception as e:
+                log.error(f"[{self.coin_key}] start failed, retrying: {e}")
+                metrics.grid_errors_total.labels(type="start").inc()
+                await asyncio.sleep(self.interval)
+        while True:
+            try:
+                await self.run_round()
+            except Exception as e:
+                log.exception(f"[{self.coin_key}] round failed: {e}")
+                metrics.grid_errors_total.labels(type="round").inc()
+            await asyncio.sleep(self.interval)
+
+    def status(self) -> dict:
+        p = self.last_plan
+        return {
+            "coin_key": self.coin_key,
+            "coin": self.coin,
+            "lower": self.levels[0],
+            "upper": self.levels[-1],
+            "num_lines": self.config["num_lines"],
+            "leverage": self._label()["leverage"],
+            "size_usd": self.size_usd,
+            "price": self.last_price,
+            "position": self.last_position,
+            "hold": self._hold,
+            "residual": p.residual if p else None,
+            "realized_24h": self.realized_24h,
+            "last_round_ms": self.last_round_ms,
+            "cells": [asdict(c) for c in p.cells] if p else [],
+        }

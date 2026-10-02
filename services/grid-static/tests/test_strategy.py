@@ -1,387 +1,244 @@
+"""The thin layer around reconcile: read, tie fills to cells, act, report.
+
+What reconcile decides is tested in test_reconcile.py. These tests are about
+what can go wrong around it -- an exchange that cannot be read, a cancel that
+fails, a fill that cannot be tied to a cell -- and about what gets reported.
+"""
+
 import pytest
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock
+
+from src.cloid import BUY, SELL, decode, encode
+from tests.conftest import START_MS
 
 
-def test_static_grid_default_intervals(grid):
-    assert grid.fill_interval == 5
-    assert grid.health_interval == 30
+def _book_order(grid, cell, side, sz, oid, ts=START_MS - 60_000, orig=None):
+    return {"coin": "BTC", "oid": oid, "cloid": encode(grid.fp, cell, side),
+            "side": "B" if side == BUY else "A",
+            "limitPx": str(grid.levels[cell] if side == BUY else grid.levels[cell + 1]),
+            "sz": str(sz), "origSz": str(orig if orig is not None else sz), "timestamp": ts}
 
 
-def test_static_grid_configurable_intervals(dal, connector, alerter, config):
-    from src.strategy import StaticGrid
-    grid = StaticGrid(
-        coin_key="BTC-10", config=config, strategy_allocation_pct=80,
-        dal=dal, connector=connector, alerter=alerter,
-        fill_interval=15, health_interval=60,
-    )
-    assert grid.fill_interval == 15
-    assert grid.health_interval == 60
+def _fill(oid, side, sz, px, t, fee="0.01"):
+    return {"coin": "BTC", "oid": oid, "side": "B" if side == BUY else "A",
+            "sz": str(sz), "px": str(px), "time": t, "fee": fee, "closedPnl": "0"}
 
 
-@pytest.mark.asyncio
-async def test_initialize_calculates_correct_levels(grid):
-    await grid.initialize()
-    assert len(grid.levels) == 10
-    assert grid.levels[0] == pytest.approx(57000, rel=1e-4)
-    assert grid.levels[-1] == pytest.approx(68000, rel=1e-4)
+def _resting_buys(grid, *cells):
+    return [_book_order(grid, c, BUY, round(50 / grid.levels[c], 2), oid=100 + c) for c in cells]
 
 
-@pytest.mark.asyncio
-async def test_initialize_only_places_buy_orders(live_grid, connector):
-    await live_grid.initialize()
-    calls = connector.place_buy_limit.call_args_list
-    assert len(calls) > 0
-    connector.place_sell_limit.assert_not_called()
+def _placed(connector):
+    out = []
+    for call in connector.place_limit.call_args_list:
+        kw = call.kwargs
+        tag = decode(kw["cloid"])
+        out.append((tag.cell, tag.side, kw["price"], kw["sz"], kw["reduce_only"], kw["is_buy"]))
+    return out
 
 
-@pytest.mark.asyncio
-async def test_initialize_skips_level_at_current_price(live_grid, connector):
-    # current price = 63000, grid has level near 63000
-    await live_grid.initialize()
-    placed_prices = [c.kwargs["price"] for c in connector.place_buy_limit.call_args_list]
-    # nothing at or above 63000 should be in buy orders
-    assert all(p < 63000 for p in placed_prices)
+def _alert_types(alerter):
+    return [c.args[0] for c in alerter.send_alert.call_args_list]
 
 
-@pytest.mark.asyncio
-async def test_initialize_saves_config_to_dal(grid, dal):
-    await grid.initialize()
-    dal.insert_grid_config.assert_called_once()
-    call_data = dal.insert_grid_config.call_args[0][0]
-    assert call_data["coin"] == "BTC"
-    assert call_data["num_lines"] == 10
+# ── starting up ────────────────────────────────────────────────────────────────
+
+async def test_start_reads_the_lot_size_and_sets_leverage(grid, connector):
+    await grid.start()
+    connector.get_sz_decimals.assert_awaited_once_with("BTC")
+    connector.set_leverage.assert_awaited_once_with("BTC", 1)
+    assert grid.sz_decimals == 2
 
 
-@pytest.mark.asyncio
-async def test_initialize_saves_orders_to_dal(grid, dal):
-    await grid.initialize()
-    assert dal.insert_grid_order.call_count > 0
+async def test_start_ties_every_recent_fill_before_the_first_round(grid, connector):
+    # After a restart the oid -> cloid memory is empty. Filling it before the
+    # first round keeps that round from going on hold over fills it could have
+    # tied to a cell.
+    connector.get_fills.return_value = [_fill(7, BUY, 0.38, 130, START_MS - 5000),
+                                        _fill(8, BUY, 0.42, 120, START_MS - 4000)]
+    await grid.start()
+    asked = sorted(c.args[0] for c in connector.get_order_status.call_args_list)
+    assert asked == [7, 8]
 
 
-@pytest.mark.asyncio
-async def test_shadow_initialize_does_not_call_exchange(grid, connector):
-    # shadow=True in config fixture
-    await grid.initialize()
-    connector.place_buy_limit.assert_not_called()
-    connector.set_leverage.assert_not_called()
+async def test_start_warns_when_the_account_cannot_carry_the_grid(grid, connector, alerter):
+    # Six cells below 155 at $50 margin each need $300.
+    connector.get_account_value.return_value = 120.0
+    await grid.start()
+    assert "error" in _alert_types(alerter)
+    assert "margin" in alerter.send_alert.call_args.args[1]["message"]
 
 
-@pytest.mark.asyncio
-async def test_recover_state_processes_missed_fills(live_grid, dal, connector):
-    # DAL has 1 OPEN buy order, exchange has 0 open orders → missed fill
-    dal.get_open_orders.return_value = [
-        {"id": 5, "coin": "BTC", "side": "BUY", "level": 3,
-         "price": 60666.0, "size_usd": 800.0,
-         "exchange_order_id": "oid123", "shadow": False}
+# ── a round ────────────────────────────────────────────────────────────────────
+
+async def test_the_first_round_on_an_empty_book_places_the_buys(grid, connector):
+    await grid.start()
+    await grid.run_round()
+    placed = _placed(connector)
+    assert sorted(p[0] for p in placed) == [0, 1, 2, 3, 4, 5]
+    assert all(side == BUY and is_buy and not ro for _, side, _, _, ro, is_buy in placed)
+    assert (3, BUY, 130.0, 0.38, False, True) in placed
+
+
+@pytest.mark.parametrize("unreadable", ["get_open_orders", "get_positions", "get_mids", "get_fills"])
+async def test_an_unreadable_exchange_does_nothing(grid, connector, unreadable):
+    # An exchange that cannot be read is never an empty exchange.
+    await grid.start()
+    getattr(connector, unreadable).side_effect = ConnectionError("down")
+    assert await grid.run_round() is None
+    connector.place_limit.assert_not_called()
+    connector.cancel_order.assert_not_called()
+
+
+async def test_a_filled_buy_gets_a_reduce_only_sell(grid, connector):
+    await grid.start()
+    cloid3 = encode(grid.fp, 3, BUY)
+    connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
+    await grid.run_round()
+    assert _placed(connector) == [(3, SELL, 140.0, 0.38, True, False)]
+
+
+async def test_fills_of_orders_the_bot_placed_need_no_lookup(grid, connector):
+    await grid.start()
+    await grid.run_round()                              # places buy on cell 3, among others
+    oid3 = next(c for c in connector.place_limit.call_args_list
+                if decode(c.kwargs["cloid"]).cell == 3)
+    placed_oid = 500 + connector.place_limit.call_args_list.index(oid3)
+    connector.get_order_status.reset_mock()
+    connector.get_fills.return_value = [_fill(placed_oid, BUY, 0.38, 130, START_MS + 1000)]
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    connector.place_limit.reset_mock()
+    await grid.run_round()
+    connector.get_order_status.assert_not_called()
+    assert _placed(connector) == [(3, SELL, 140.0, 0.38, True, False)]
+
+
+async def test_a_fill_that_cannot_be_tied_puts_the_grid_on_hold(grid, connector, alerter):
+    await grid.start()
+    connector.get_order_status.side_effect = ConnectionError("down")
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
+    plan = await grid.run_round()
+    assert plan.hold is not None
+    connector.place_limit.assert_not_called()
+    assert "grid_hold" in _alert_types(alerter)
+
+
+async def test_an_unknown_oid_is_asked_again_next_round(grid, connector):
+    # "unknownOid" can be the exchange not having caught up. Remembering it as
+    # "not ours" would keep the grid on hold for good.
+    await grid.start()
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
+    await grid.run_round()
+    await grid.run_round()
+    assert [c.args[0] for c in connector.get_order_status.call_args_list].count(9) == 2
+
+
+async def test_cancels_go_first_and_a_failed_cancel_skips_its_replacement(grid, connector):
+    # Placing the bigger sell while the small one survives would leave the cell
+    # with two sells.
+    await grid.start()
+    small_sell = _book_order(grid, 3, SELL, 0.20, oid=300, ts=START_MS - 2000)
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5) + [small_sell]
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    cloid3 = encode(grid.fp, 3, BUY)
+    connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.20, 130, START_MS - 3000),
+                                        _fill(9, BUY, 0.18, 130, START_MS - 1000)]
+    connector.cancel_order.side_effect = RuntimeError("already gone")
+    await grid.run_round()
+    connector.cancel_order.assert_awaited_once_with("BTC", 300)
+    connector.place_limit.assert_not_called()
+
+
+async def test_one_failed_order_does_not_stop_the_others(grid, connector):
+    await grid.start()
+    place = connector.place_limit.side_effect
+
+    async def flaky(coin, is_buy, price, sz, cloid, reduce_only):
+        if decode(cloid).cell == 2:
+            raise RuntimeError("rejected")
+        return await place(coin, is_buy, price, sz, cloid, reduce_only)
+
+    connector.place_limit.side_effect = flaky
+    await grid.run_round()
+    assert connector.place_limit.await_count == 6
+
+
+# ── reporting ──────────────────────────────────────────────────────────────────
+
+async def test_a_hold_is_reported_once_and_so_is_its_end(grid, connector, alerter):
+    await grid.start()
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 3, 4, 5)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.5, "entry_px": 130.0}}
+    await grid.run_round()
+    await grid.run_round()
+    connector.get_positions.return_value = {}
+    await grid.run_round()
+    types = _alert_types(alerter)
+    assert types.count("grid_hold") == 1
+    assert types.count("hold_cleared") == 1
+
+
+async def test_fills_from_before_the_start_are_not_announced(grid, connector, alerter, clock):
+    cloid3 = encode(grid.fp, 3, BUY)
+    connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS - 1000)]
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    await grid.start()
+    await grid.run_round()
+    assert "buy_filled" not in _alert_types(alerter)
+
+    connector.get_fills.return_value.append(_fill(9, BUY, 0.0, 130, START_MS + 1000))
+    clock.ms += 30_000
+    await grid.run_round()
+    assert "buy_filled" in _alert_types(alerter)
+
+
+async def test_a_closed_cycle_reports_its_profit_after_fees(grid, connector, alerter):
+    cloid_b = encode(grid.fp, 3, BUY)
+    cloid_s = encode(grid.fp, 3, SELL)
+    statuses = {9: cloid_b, 10: cloid_s}
+    connector.get_order_status.side_effect = lambda oid: {"oid": oid, "cloid": statuses[oid],
+                                                          "status": "filled"}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    await grid.start()
+    connector.get_fills.return_value = [
+        _fill(9, BUY, 0.38, 130, START_MS + 1000, fee="0.01"),
+        _fill(10, SELL, 0.38, 140, START_MS + 2000, fee="0.02"),
     ]
-    connector.get_open_orders.return_value = []  # not on exchange → filled
-    live_grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    live_grid.grid_config_id = 1
-    await live_grid.recover_state()
-    dal.patch_order.assert_called()
-    dal.insert_grid_trade.assert_called()
+    await grid.run_round()
+    closed = [c.args[1] for c in alerter.send_alert.call_args_list if c.args[0] == "trade_closed"]
+    assert len(closed) == 1
+    # (140 - 130) * 0.38 - 0.01 - 0.02
+    assert closed[0]["profit_usd"] == pytest.approx(3.77)
+    assert closed[0]["buy_price"] == 130.0 and closed[0]["sell_price"] == 140.0
 
 
-@pytest.mark.asyncio
-async def test_recover_state_skips_when_exchange_unreadable(live_grid, dal, connector):
-    """A failed exchange call must never read as an empty book. It used to: the
-    connector swallowed the error into [], so every resting order looked filled
-    and got a sell placed against a position that did not exist -- worst exactly
-    when the network is flaky, which is when pods restart in the first place."""
-    dal.get_open_orders.return_value = [
-        {"id": 5, "coin": "BTC", "side": "BUY", "level": 3,
-         "price": 60666.0, "size_usd": 800.0,
-         "exchange_order_id": "oid123", "shadow": False}
-    ]
-    connector.get_open_orders.side_effect = RuntimeError("exchange onbereikbaar")
-    live_grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    live_grid.grid_config_id = 1
-
-    await live_grid.recover_state()  # must not raise
-
-    dal.insert_grid_trade.assert_not_called()
-    connector.place_sell_limit.assert_not_called()
+async def test_price_outside_the_grid_is_alerted(grid, connector, alerter):
+    await grid.start()
+    connector.get_mids.return_value = {"BTC": 95.0}
+    await grid.run_round()
+    assert "outside_grid" in _alert_types(alerter)
 
 
-@pytest.mark.asyncio
-async def test_live_fill_check_keeps_watermark_when_fills_unreadable(live_grid, dal, connector):
-    """The watermark used to move before the fills were in hand, so a failed call
-    dropped that window for good. Those fills then resurfaced as 'missed fills'
-    on the next restart, booked at the line price instead of the real one."""
-    live_grid.grid_config_id = 1
-    live_grid.last_fill_ms = 1000
-    connector.get_fills.side_effect = RuntimeError("exchange onbereikbaar")
-
-    with pytest.raises(RuntimeError):
-        await live_grid._live_fill_check()
-
-    assert live_grid.last_fill_ms == 1000
+async def test_status_shows_the_last_round(grid, connector):
+    await grid.start()
+    await grid.run_round()
+    s = grid.status()
+    assert s["coin"] == "BTC"
+    assert s["price"] == 155.0
+    assert s["hold"] is None
+    assert len(s["cells"]) == 10
+    assert s["cells"][3]["buy_price"] == 130.0
 
 
-@pytest.mark.asyncio
-async def test_process_buy_fill_still_sells_when_level_already_has_an_order(grid, dal):
-    """Two different buy orders may both exit one level up. Skipping the second
-    sell left the bought position with no exit."""
-    grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    grid.grid_config_id = 1
-    dal.get_open_orders.return_value = [
-        {"grid_config_id": 1, "level": 4, "side": "SELL", "price": 61888, "status": "OPEN"}
-    ]
-    dal.get_open_trades.return_value = []
-    dal.insert_grid_trade.return_value = {"id": 500}
-    order = {"id": 10, "level": 3, "size_usd": 800.0}
-
-    await grid._process_buy_fill(order, 60666.0)
-
-    prices = [c.args[0]["price"] for c in dal.insert_grid_order.call_args_list]
-    assert 61888 in prices
-
-
-@pytest.mark.asyncio
-async def test_process_sell_fill_skips_buy_if_level_already_covered(grid, dal):
-    grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    grid.grid_config_id = 1
-    dal.get_open_orders.return_value = [
-        {"grid_config_id": 1, "level": 3, "side": "BUY", "price": 60666, "status": "OPEN"}
-    ]
-    dal.get_open_trades.return_value = []
-    order = {"id": 20, "level": 4, "size_usd": 800.0}
-
-    await grid._process_sell_fill(order, 61888.0)
-
-    prices = [c.args[0]["price"] for c in dal.insert_grid_order.call_args_list]
-    assert 60666 not in prices
-
-
-@pytest.mark.asyncio
-async def test_health_check_backfills_missing_buy_below_price(grid, connector, dal):
-    grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    grid.grid_config_id = 1
-    connector.get_mids.return_value = {"BTC": 63000.0}  # between level 4 (61888) and level 5 (63111)
-    dal.get_open_orders.return_value = [
-        {"grid_config_id": 1, "level": 0, "side": "BUY", "price": 57000},
-        {"grid_config_id": 1, "level": 2, "side": "SELL", "price": 59444},
-    ]
-
-    await grid._health_check()
-
-    prices = [c.args[0]["price"] for c in dal.insert_grid_order.call_args_list]
-    assert 58222 in prices  # level 1, uncovered, below price
-    assert 60666 in prices  # level 3, uncovered, below price
-    assert 61888 in prices  # level 4, uncovered, below price
-    assert prices.count(57000) == 0  # level 0 already has an open BUY
-    assert prices.count(59444) == 0  # level 2 already has an open SELL (position held)
-
-
-@pytest.mark.asyncio
-async def test_health_check_does_not_backfill_above_price(grid, connector, dal):
-    grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    grid.grid_config_id = 1
-    connector.get_mids.return_value = {"BTC": 63000.0}
-    dal.get_open_orders.return_value = []
-
-    await grid._health_check()
-
-    prices = [c.args[0]["price"] for c in dal.insert_grid_order.call_args_list]
-    assert 64333 not in prices
-    assert 68000 not in prices
-
-
-@pytest.mark.asyncio
-async def test_health_check_backfill_skips_level_with_open_trade(grid, connector, dal):
-    # Regression test: a level can be "empty" of resting orders because its
-    # position was bought and is now waiting to sell one level up — that is
-    # NOT the same as "never seeded", and backfill must not stack a second
-    # position there.
-    #
-    # buy_price is deliberately NOT 60666: a live fill never lands on the grid
-    # line. The connector rounds the limit price, the exchange fills at its own,
-    # and partial fills average the entry. Matching the line by price therefore
-    # missed every live position and re-bought the level once per health cycle.
-    grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    grid.grid_config_id = 1
-    connector.get_mids.return_value = {"BTC": 63000.0}
-    dal.get_open_orders.return_value = []  # level 3 (60666) has no resting order...
-    dal.get_open_trades.return_value = [
-        {"buy_level": 3, "buy_price": 60641.0, "status": "OPEN", "sell_order_id": 555}
-    ]  # ...because its position is open, waiting on its sell at 61888
-
-    await grid._health_check()
-
-    prices = [c.args[0]["price"] for c in dal.insert_grid_order.call_args_list]
-    assert 60666.0 not in prices
-    dal.get_open_trades.assert_called_with("BTC", 1)
-
-
-@pytest.mark.asyncio
-async def test_health_check_backfill_does_not_stack_across_cycles(grid, connector, dal):
-    """Reproduces the live incident of 2026-09-09: eight buys on one level in
-    eight minutes, each spawning its own sell one level up. Every health cycle
-    re-bought the line because the filled buy left no resting order and the
-    trade's buy_price did not match the line."""
-    grid.levels = [57000, 58222, 59444, 60666, 61888, 63111, 64333, 65555, 66777, 68000]
-    grid.grid_config_id = 1
-    connector.get_mids.return_value = {"BTC": 63000.0}
-    dal.get_open_orders.return_value = []
-    dal.get_open_trades.return_value = [
-        {"buy_level": 3, "buy_price": 60641.0, "status": "OPEN", "sell_order_id": 555}
-    ]
-
-    for _ in range(8):
-        await grid._health_check()
-
-    prices = [c.args[0]["price"] for c in dal.insert_grid_order.call_args_list]
-    assert prices.count(60666) == 0
-
-
-@pytest.mark.asyncio
-async def test_process_sell_fill_reports_profit_net_of_fees(grid, dal):
-    """profit_usd is what the account actually changes by: gross minus the fee on
-    both sides. The buy fee is already on the trade; the sell fee is added."""
-    from src.strategy import MAKER_FEE_RATE
-
-    grid.levels = [57000, 58222, 59444, 60666, 61888]
-    grid.grid_config_id = 1
-    dal.get_open_orders.return_value = []
-    dal.get_open_trades.return_value = [
-        {"id": 500, "sell_order_id": 20, "buy_price": 60666.0,
-         "size_usd": 800.0, "fee_usd": 0.12},
-    ]
-    order = {"id": 20, "level": 4, "size_usd": 800.0}
-
-    await grid._process_sell_fill(order, 61888.0)
-
-    patched = dal.patch_trade.call_args[0][1]
-    sell_fee = 800.0 * 1 * MAKER_FEE_RATE
-    gross = (61888.0 - 60666.0) / 60666.0 * 800.0 * 1
-    assert patched["fee_usd"] == pytest.approx(0.12 + sell_fee)
-    assert patched["profit_usd"] == round(gross - (0.12 + sell_fee), 2)
-
-
-@pytest.mark.asyncio
-async def test_process_buy_fill_live_takes_size_and_fee_from_fill(grid, dal, connector):
-    """Live computes nothing: the fill says exactly how much was bought and what
-    it cost, so the SELL goes to market with exactly that size."""
-    grid.shadow = False
-    grid.levels = [57000, 58222, 59444, 60666, 61888]
-    grid.grid_config_id = 1
-    dal.get_open_orders.return_value = []
-    dal.insert_grid_trade.return_value = {"id": 500}
-    order = {"id": 10, "level": 3, "size_usd": 800.0}
-    fill = {"sz": "0.039", "fee": "0.0176", "px": "60666.0"}
-
-    await grid._process_buy_fill(order, 60666.0, fill=fill)
-
-    assert dal.insert_grid_trade.call_args[0][0]["fee_usd"] == 0.0176
-    assert connector.place_sell_limit.call_args[0][1] == 0.039
-
-
-@pytest.mark.asyncio
-async def test_process_buy_fill_shadow_sizes_position_by_leverage(grid, dal):
-    """Shadow has no fill and has to model one -- including leverage, otherwise it
-    simulates a smaller position than live would take."""
-    grid.config["leverage"] = 3
-    grid.levels = [57000, 58222, 59444, 60666, 61888]
-    grid.grid_config_id = 1
-    dal.get_open_orders.return_value = []
-    dal.insert_grid_trade.return_value = {"id": 500}
-    order = {"id": 10, "level": 3, "size_usd": 800.0}
-
-    await grid._process_buy_fill(order, 60000.0)
-
-    assert dal.insert_grid_trade.call_args[0][0]["fee_usd"] == pytest.approx(0.36)
-
-
-@pytest.mark.asyncio
-async def test_partial_fills_grow_one_trade_instead_of_creating_more(grid, dal, connector):
-    """A limit order can fill in pieces. Giving every piece its own trade left
-    positions without a sell order; now exactly one trade grows with them."""
-    grid.shadow = False
-    grid.levels = [57000, 58222, 59444, 60666, 61888]
-    grid.grid_config_id = 1
-    grid.config["leverage"] = 3
-    dal.get_open_orders.return_value = []
-    dal.get_open_trades.return_value = []
-    dal.insert_grid_trade.return_value = {"id": 500, "buy_order_id": 10}
-    dal.insert_grid_order.return_value = {"id": 77, "level": 4}
-    order = {"id": 10, "level": 3, "size_usd": 800.0}
-
-    # eerste stukje
-    await grid._process_buy_fill(order, 60666.0, fill={"sz": "0.02", "px": "60666.0", "fee": "0.5"})
-    assert dal.insert_grid_trade.call_count == 1
-    assert connector.place_sell_limit.call_args[0][1] == 0.02
-
-    # second piece of the same order
-    dal.get_open_trades.return_value = [
-        {"id": 500, "buy_order_id": 10, "buy_price": 60666.0,
-         "size_usd": 404.44, "fee_usd": 0.5, "sell_order_id": 77},
-    ]
-    dal.get_open_orders.return_value = [
-        {"id": 77, "grid_config_id": 1, "level": 4, "side": "SELL",
-         "price": 61888, "status": "OPEN", "exchange_order_id": "999"},
-    ]
-    await grid._process_buy_fill(order, 60666.0, fill={"sz": "0.01", "px": "60666.0", "fee": "0.25"})
-
-    # no second trade, but a larger sell, and the old one was cancelled
-    assert dal.insert_grid_trade.call_count == 1
-    connector.cancel_order.assert_awaited_with("BTC", "999")
-    assert connector.place_sell_limit.call_args[0][1] == 0.03
-
-    patched = dal.patch_trade.call_args_list[-2].args[1]
-    assert patched["fee_usd"] == 0.75
-
-
-@pytest.mark.asyncio
-async def test_record_funding_stores_new_records(grid, dal, connector):
-    """Funding comes from the exchange, not from a formula: the rate changes every
-    hour and can flip sign, so modelling it would get the sign wrong."""
-    grid.shadow = False
-    grid.grid_config_id = 15
-    dal.get_last_funding_ms.return_value = 1_000_000
-    connector.get_funding.return_value = [
-        {"time": 1_003_600, "coin": "BTC", "usdc": -0.0031,
-         "funding_rate": 0.0000125, "szi": 0.00312},
-        {"time": 1_007_200, "coin": "BTC", "usdc": 0.0226,
-         "funding_rate": -0.0000918, "szi": 0.00312},
-        {"time": 1_007_200, "coin": "ETH", "usdc": -0.5,
-         "funding_rate": 0.0001, "szi": 1.0},
-    ]
-
-    await grid._record_funding()
-
-    connector.get_funding.assert_awaited_with(1_000_001)
-    stored = [c.args[0] for c in dal.insert_grid_funding.call_args_list]
-    assert len(stored) == 2          # the ETH record does not belong to this grid
-    assert stored[0]["usdc"] == -0.0031
-    assert stored[1]["usdc"] == 0.0226
-    assert all(r["grid_config_id"] == 15 and r["shadow"] is False for r in stored)
-
-
-@pytest.mark.asyncio
-async def test_record_funding_does_nothing_in_shadow(grid, dal, connector):
-    """A shadow grid holds no position, so there is no funding to fetch."""
-    grid.shadow = True
-
-    await grid._record_funding()
-
-    connector.get_funding.assert_not_awaited()
-    dal.insert_grid_funding.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_live_sizing_uses_fixed_start_capital_not_account_value(grid, dal, connector):
-    """Account value moves with unrealised P&L, so sizing on it shrinks the lines
-    exactly while the grid is buying its way down. Fixed start capital plus realised
-    profit keeps the lines stable -- and matches how shadow sizes, so the two stay
-    comparable."""
-    grid.shadow = False
-    grid.grid_config_id = 1
-    grid.start_balance = 464.0
-    connector.get_account_value.return_value = 50.0  # would make lines 9x smaller
-    dal.get_closed_trades.return_value = [{"profit_usd": 16.0}]
-
-    size = await grid._current_size_usd()
-
-    connector.get_account_value.assert_not_awaited()
-    # (464 + 16) * 80% / 10 lines
-    assert size == 38.4
+async def test_status_before_the_first_round(grid):
+    s = grid.status()
+    assert s["cells"] == [] and s["last_round_ms"] is None

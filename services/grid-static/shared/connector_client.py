@@ -4,61 +4,51 @@ _HEADERS = {"X-Bot-Name": "grid-static"}
 
 
 class ConnectorClient:
+    """Every read raises when the connector cannot answer. The grid treats an
+    exception as "do nothing this round" -- never as an empty book or a flat
+    position."""
+
     def __init__(self, base_url: str) -> None:
         self._url = base_url.rstrip("/")
 
-    async def get_mids(self) -> dict[str, float]:
+    async def _get(self, path: str, timeout: float = 10, **params):
         async with httpx.AsyncClient() as c:
-            r = await c.get(f"{self._url}/mids", headers=_HEADERS, timeout=10)
+            r = await c.get(f"{self._url}{path}", params=params or None,
+                            headers=_HEADERS, timeout=timeout)
             r.raise_for_status()
             return r.json()
+
+    async def get_mids(self) -> dict[str, float]:
+        return await self._get("/mids")
 
     async def get_account_value(self) -> float:
-        async with httpx.AsyncClient() as c:
-            r = await c.get(f"{self._url}/account/value", headers=_HEADERS, timeout=10)
-            r.raise_for_status()
-            return float(r.json()["account_value"])
+        return float((await self._get("/account/value"))["account_value"])
 
-    async def get_fills(self, coin: str, since_ms: int) -> list[dict]:
-        async with httpx.AsyncClient() as c:
-            r = await c.get(f"{self._url}/fills/{coin}",
-                            params={"since_ms": since_ms},
-                            headers=_HEADERS, timeout=10)
-            r.raise_for_status()
-            return r.json()
+    async def get_positions(self) -> dict[str, dict]:
+        return await self._get("/positions")
 
     async def get_open_orders(self, coin: str) -> list[dict]:
-        async with httpx.AsyncClient() as c:
-            r = await c.get(f"{self._url}/orders/{coin}", headers=_HEADERS, timeout=10)
-            r.raise_for_status()
-            return r.json()
+        return await self._get(f"/orders/{coin}")
 
-    async def place_buy_limit(self, coin: str, price: float,
-                              size_usd: float, leverage: int) -> dict:
+    async def get_fills(self, coin: str, since_ms: int) -> list[dict]:
+        return await self._get(f"/fills/{coin}", since_ms=since_ms)
+
+    async def get_order_status(self, oid: int) -> dict:
+        return await self._get(f"/orders/status/{oid}")
+
+    async def get_sz_decimals(self, coin: str) -> int:
+        return int((await self._get(f"/meta/{coin}"))["sz_decimals"])
+
+    async def place_limit(self, coin: str, is_buy: bool, price: float, sz: float,
+                          cloid: str, reduce_only: bool) -> dict:
         async with httpx.AsyncClient() as c:
             r = await c.post(f"{self._url}/orders/limit", headers=_HEADERS, timeout=15,
-                             json={"coin": coin, "direction": "BUY",
-                                   "price": price, "size_usd": size_usd,
-                                   "leverage": leverage})
+                             json={"coin": coin, "is_buy": is_buy, "price": price, "sz": sz,
+                                   "cloid": cloid, "reduce_only": reduce_only})
             r.raise_for_status()
             return r.json()
 
-    async def place_sell_limit(self, coin: str, sz_coin: float, price: float) -> dict:
-        async with httpx.AsyncClient() as c:
-            r = await c.post(f"{self._url}/orders/tp", headers=_HEADERS, timeout=15,
-                             json={"coin": coin, "direction": "BUY",
-                                   "sz_coin": sz_coin, "limit_price": price})
-            r.raise_for_status()
-            return r.json()
-
-    async def get_funding(self, since_ms: int) -> list[dict]:
-        async with httpx.AsyncClient() as c:
-            r = await c.get(f"{self._url}/funding", headers=_HEADERS, timeout=20,
-                            params={"since_ms": since_ms})
-            r.raise_for_status()
-            return r.json()
-
-    async def cancel_order(self, coin: str, oid: str) -> dict:
+    async def cancel_order(self, coin: str, oid: int) -> dict:
         async with httpx.AsyncClient() as c:
             r = await c.delete(f"{self._url}/orders/{coin}/{oid}",
                                headers=_HEADERS, timeout=10)

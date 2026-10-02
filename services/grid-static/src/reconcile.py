@@ -77,6 +77,7 @@ class Plan:
     cancels: list[Cancel] = field(default_factory=list)
     places: list[Place] = field(default_factory=list)
     hold: str | None = None
+    # Notices other than the hold, which has its own field.
     alerts: list[str] = field(default_factory=list)
     cells: list[CellView] = field(default_factory=list)
     residual: float = 0.0
@@ -155,8 +156,6 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
     elif out.residual < -tol:
         out.hold = (f"resting sells of {covered:.6g} exceed what the position "
                     f"{position} can cover")
-    if out.hold:
-        out.alerts.append(f"grid on hold: {out.hold}")
 
     # ── Sells: give every unsold coin an exit ─────────────────────────────────
     # Allowed on hold too, unless the position is already short of the sells.

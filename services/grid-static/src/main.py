@@ -8,20 +8,72 @@ import yaml
 from fastapi import FastAPI, Request
 from prometheus_client import make_asgi_app
 
-from shared.dal_client import DALClient
 from shared.connector_client import ConnectorClient
 from shared.alerter_client import AlerterClient
-from src.strategy import StaticGrid
-from src.grid_math import calculate_levels
+from src.grid_math import calculate_size_usd
+from src.strategy import MIN_NOTIONAL, StaticGrid
 
 log = logging.getLogger("grid-static")
 _grids: list[StaticGrid] = []
+
+
+class ConfigError(ValueError):
+    """A configuration the bot refuses to trade with."""
 
 
 def _load_config() -> dict:
     path = os.getenv("SETTINGS_FILE", "config/settings.yaml")
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _validate(cfg: dict) -> tuple[list[tuple[str, dict, float]], list[str]]:
+    """The grids to run, with their start balance, and the entries skipped.
+
+    Raises ConfigError for anything that must not trade: refusing to start is
+    loud and costs nothing, trading on a wrong assumption costs money."""
+    errors, grids, skipped = [], [], []
+    default_balance = cfg.get("start_balance")
+    pct = cfg.get("strategy_allocation_pct", 100)
+    owner_of: dict[str, str] = {}
+
+    for key, c in (cfg.get("coins") or {}).items():
+        if not c.get("active"):
+            continue
+        strategy_type = c.get("strategy_type", "STATIC")
+        if strategy_type != "STATIC":
+            # This image runs the static grid only. Skip loudly: crashing would
+            # take the other grids down, skipping silently would leave you
+            # believing a grid runs that doesn't.
+            skipped.append(f"{key}: strategy_type={strategy_type} is not supported "
+                           f"by grid-static; grid not started")
+            continue
+        if c.get("shadow"):
+            # Shadow mode is gone. Starting anyway would place real orders for
+            # someone who believes they are simulating.
+            errors.append(f"{key}: shadow mode was removed. Test on testnet instead "
+                          f"(hyperliquid.testnet: true) and remove `shadow` from the grid.")
+        coin = c["coin"]
+        if coin in owner_of:
+            errors.append(f"{key} and {owner_of[coin]} both trade {coin}. One grid per coin: "
+                          f"the exchange keeps one position per coin per account, and two "
+                          f"grids cannot tell theirs apart.")
+        owner_of.setdefault(coin, key)
+        balance = c.get("start_balance", default_balance)
+        if balance is None:
+            errors.append(f"{key}: no start_balance. It sizes every order of a live grid; "
+                          f"there is no safe default.")
+            continue
+        size = calculate_size_usd(balance, pct, c["allocation_pct"], c["num_lines"])
+        notional = size * float(c.get("leverage", 1))
+        if notional < MIN_NOTIONAL:
+            errors.append(f"{key}: ${notional:.2f} per order is under Hyperliquid's "
+                          f"${MIN_NOTIONAL:g} minimum. Raise start_balance or use fewer lines.")
+        grids.append((key, c, balance))
+
+    if errors:
+        raise ConfigError("\n".join(errors))
+    return grids, skipped
 
 
 async def _wait_for(name: str, probe, attempts: int = 30, delay: float = 2.0) -> None:
@@ -40,69 +92,28 @@ async def _wait_for(name: str, probe, attempts: int = 30, delay: float = 2.0) ->
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     cfg = _load_config()
-    dal = DALClient(cfg["dal_url"])
+    try:
+        grids, skipped = _validate(cfg)
+    except ConfigError as e:
+        log.error(f"Refusing to start:\n{e}")
+        raise
+
     connector = ConnectorClient(cfg["connector_url"])
     alerter = AlerterClient(cfg["alerter_url"])
-    strategy_pct = cfg.get("strategy_allocation_pct", 100)
-    fill_interval = cfg.get("fills_poll_interval_seconds", 5)
-    health_interval = cfg.get("health_check_interval_seconds", 30)
-    default_balance = cfg.get("start_balance", cfg.get("shadow_start_balance", 10000.0))
+    for msg in skipped:
+        log.error(msg)
+        await alerter.send_alert("error", {"coin": msg.split(":")[0], "message": msg})
 
-    active = {k: v for k, v in cfg.get("coins", {}).items() if v.get("active")}
+    interval = cfg.get("round_interval_seconds", cfg.get("fills_poll_interval_seconds", 30))
+    lookback = cfg.get("fill_lookback_hours", 72)
+    for key, c, balance in grids:
+        _grids.append(StaticGrid(key, c, cfg.get("strategy_allocation_pct", 100), balance,
+                                 connector, alerter, interval=interval,
+                                 lookback_hours=lookback))
 
-    for coin_key, coin_cfg in active.items():
-        # This image runs the static grid only. A trailing or dynamic entry is a
-        # configuration mistake: skip it loudly rather than crash the pod, which
-        # would take the live grids down with it, and never skip it silently,
-        # which would leave you believing a grid runs that doesn't.
-        strategy_type = coin_cfg.get("strategy_type", "STATIC")
-        if strategy_type != "STATIC":
-            log.error(f"[{coin_key}] strategy_type={strategy_type} is not supported "
-                      f"by grid-static; grid not started")
-            await alerter.send_alert("error", {
-                "coin": coin_cfg.get("coin", coin_key),
-                "message": (f"{coin_key}: strategy_type={strategy_type} is not supported "
-                            f"by grid-static; grid not started"),
-            })
-            continue
-
-        # Capital is per grid: a shadow grid is its own simulation with its own
-        # wallet, and two live grids must not each assume they own the account.
-        start_balance = coin_cfg.get("start_balance", default_balance)
-        grid = StaticGrid(coin_key, coin_cfg, strategy_pct, dal, connector, alerter,
-                          fill_interval, health_interval, start_balance)
-        _grids.append(grid)
-
-    # The order matters. On a fresh install the dal comes up after us: its
-    # initContainer applies the schema first. Without this wait, startup fails on the
-    # first get_active_configs, uvicorn exits and the pod restarts. That heals itself,
-    # but it looks like a broken install and costs a cycle -- and after a node outage
-    # every pod starts at once, which is exactly when the race is most likely.
     await _wait_for("connector", connector.get_mids)
-    await _wait_for("dal", dal.health)
-
-    for grid in _grids:
-        active_configs = await grid.dal.get_active_configs(grid.coin)
-        matched = next((c for c in active_configs
-                        if c["num_lines"] == grid.config["num_lines"]
-                        and c["upper"] == grid.config["upper"]
-                        and c["lower"] == grid.config["lower"]
-                        and c["leverage"] == grid.config.get("leverage", 1)), None)
-        if matched:
-            grid.grid_config_id = matched["id"]
-            grid.levels = calculate_levels(
-                grid.config["lower"], grid.config["upper"], grid.config["num_lines"]
-            )
-            await grid.recover_state()
-        else:
-            await grid.initialize()
-
-    tasks = []
-    for grid in _grids:
-        tasks.append(asyncio.create_task(grid.run_fill_loop()))
-        tasks.append(asyncio.create_task(grid.run_health_loop()))
-
-    log.info(f"Started {len(_grids)} grid(s), {len(tasks)} loop tasks")
+    tasks = [asyncio.create_task(g.run_loop()) for g in _grids]
+    log.info(f"Started {len(_grids)} grid(s)")
     yield
 
     for t in tasks:
@@ -125,3 +136,9 @@ async def log_requests(request: Request, call_next):
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "grids": len(_grids)}
+
+
+@app.get("/status")
+def status() -> dict:
+    """What each grid saw in its last round. Reads nothing from the exchange."""
+    return {"grids": [g.status() for g in _grids]}
