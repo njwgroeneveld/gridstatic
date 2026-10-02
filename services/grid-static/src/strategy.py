@@ -26,6 +26,11 @@ _DAY_MS = 24 * 60 * 60 * 1000
 _UNREADABLE_ALERT_AFTER = 3          # failed rounds in a row before an alert
 
 
+def dex_of(coin: str) -> str:
+    """The perp dex a coin trades on: "xyz" for "xyz:XYZ100", "" by default."""
+    return coin.split(":", 1)[0] if ":" in coin else ""
+
+
 class StaticGrid:
     def __init__(self, coin_key: str, config: dict, strategy_allocation_pct: float,
                  start_balance: float, connector, alerter, *, interval: float = 30,
@@ -93,8 +98,9 @@ class StaticGrid:
     async def _check_margin(self) -> None:
         """Warn, not refuse: a grid may be set larger than what is free right now."""
         try:
-            price = float((await self.connector.get_mids())[self.coin])
-            value = await self.connector.get_account_value()
+            price = await self.connector.get_price(self.coin)
+            # A HIP-3 dex keeps a balance of its own; that is the one that pays.
+            value = await self.connector.get_account_value(dex=dex_of(self.coin))
         except Exception as e:
             log.warning(f"[{self.coin_key}] margin check skipped: {e}")
             return
@@ -148,7 +154,7 @@ class StaticGrid:
         try:
             orders = await self.connector.get_open_orders(self.coin)
             positions = await self.connector.get_positions()
-            price = float((await self.connector.get_mids())[self.coin])
+            price = await self.connector.get_price(self.coin)
             fills = await self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms)
         except Exception as e:
             # An exchange that cannot be read is never an empty exchange: act on

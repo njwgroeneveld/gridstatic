@@ -80,7 +80,7 @@ async def test_the_first_round_on_an_empty_book_places_the_buys(grid, connector)
     assert (3, BUY, 130.0, 0.38, False, True) in placed
 
 
-@pytest.mark.parametrize("unreadable", ["get_open_orders", "get_positions", "get_mids", "get_fills"])
+@pytest.mark.parametrize("unreadable", ["get_open_orders", "get_positions", "get_price", "get_fills"])
 async def test_an_unreadable_exchange_does_nothing(grid, connector, unreadable):
     # An exchange that cannot be read is never an empty exchange.
     await grid.start()
@@ -223,7 +223,7 @@ async def test_a_closed_cycle_reports_its_profit_after_fees(grid, connector, ale
 
 async def test_price_outside_the_grid_is_alerted(grid, connector, alerter):
     await grid.start()
-    connector.get_mids.return_value = {"BTC": 95.0}
+    connector.get_price.return_value = 95.0
     await grid.run_round()
     assert "outside_grid" in _alert_types(alerter)
 
@@ -327,3 +327,31 @@ async def test_an_exchange_that_stays_unreadable_is_alerted_once(grid, connector
         await grid.run_round()
     errors = [c.args[1]["message"] for c in alerter.send_alert.call_args_list if c.args[0] == "error"]
     assert len(errors) == 1 and "unreadable" in errors[0]
+
+
+# ── HIP-3 markets ──────────────────────────────────────────────────────────────
+
+async def test_the_grid_decides_from_the_mark_price_not_the_mid(grid, connector):
+    # On a thin book the mid is the middle of an empty spread, and the grid's own
+    # buys would move it. The mid here says 300 -- every line would get a buy.
+    connector.get_mids.return_value = {"BTC": 300.0}
+    connector.get_price.return_value = 155.0
+    await grid.start()
+    await grid.run_round()
+    assert sorted(decode(c.kwargs["cloid"]).cell
+                  for c in connector.place_limit.call_args_list) == [0, 1, 2, 3, 4, 5]
+    connector.get_price.assert_awaited_with("BTC")
+
+
+async def test_the_margin_check_reads_the_balance_of_the_coin_s_dex(config, connector, alerter, clock):
+    from src.strategy import StaticGrid
+    config["coin"] = "xyz:XYZ100"
+    g = StaticGrid("NDX", config, strategy_allocation_pct=100, start_balance=550,
+                   connector=connector, alerter=alerter, clock=clock)
+    await g.start()
+    connector.get_account_value.assert_awaited_once_with(dex="xyz")
+
+
+async def test_the_margin_check_on_the_default_dex(grid, connector):
+    await grid.start()
+    connector.get_account_value.assert_awaited_once_with(dex="")

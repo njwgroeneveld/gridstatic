@@ -27,6 +27,7 @@ def connector():
     m.get_open_orders.return_value = []
     m.get_positions.return_value = {}
     m.get_mids.return_value = {"BTC": 155.0}
+    m.get_price.return_value = 155.0
     m.get_fills.return_value = []
     m.get_sz_decimals.return_value = 2
     m.get_account_value.return_value = 10_000.0

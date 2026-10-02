@@ -21,8 +21,12 @@ class ConnectorClient:
     async def get_mids(self) -> dict[str, float]:
         return await self._get("/mids")
 
-    async def get_account_value(self) -> float:
-        return float((await self._get("/account/value"))["account_value"])
+    async def get_account_value(self, dex: str = "") -> float:
+        return float((await self._get("/account/value", dex=dex))["account_value"])
+
+    async def get_price(self, coin: str) -> float:
+        """The mark price: on a thin book the mid moves with the grid's own orders."""
+        return float((await self._get(f"/price/{coin}"))["mark_px"])
 
     async def get_positions(self) -> dict[str, dict]:
         return await self._get("/positions")
