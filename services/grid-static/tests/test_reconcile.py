@@ -250,3 +250,13 @@ def test_every_cell_is_reported():
 def test_residual_is_reported(position):
     p = run(orders=resting_buys(0, 1, 2, 4, 5), position=position)
     assert p.residual == pytest.approx(position)
+
+
+def test_a_forced_hold_blocks_buys_but_not_sells():
+    p = plan(levels=LEVELS, fp=FP, orders=resting_buys(0, 1, 2, 4, 5),
+             fills=[fill(3, BUY, 0.38, t=1000)], position=0.38, price=155.0,
+             size_usd=50.0, leverage=1, sz_decimals=2, min_notional=10.0,
+             forced_hold="reading the wrong account")
+    assert p.hold == "reading the wrong account"
+    assert buys(p) == {}
+    assert sells(p)[3].sz == 0.38

@@ -57,6 +57,7 @@ class StaticGrid:
 
         self.last_plan: Plan | None = None
         self._last_placed: list[Place] = []
+        self._placed_oids: set[int] = set()   # placed last round, see run_round
         self.last_round_ms: int | None = None
         self.last_price: float | None = None
         self.last_position: float | None = None
@@ -163,8 +164,9 @@ class StaticGrid:
         p = plan(levels=self.levels, fp=self.fp, orders=orders,
                  fills=[t for t, _ in tied], position=position, price=price,
                  size_usd=self.size_usd, leverage=self.leverage,
-                 sz_decimals=self.sz_decimals, min_notional=MIN_NOTIONAL)
-        placed = await self._execute(p)
+                 sz_decimals=self.sz_decimals, min_notional=MIN_NOTIONAL,
+                 forced_hold=self._vanished(orders, fills))
+        placed, self._placed_oids = await self._execute(p)
         await self._report(p, tied, price)
 
         self.last_plan, self.last_price, self.last_position = p, price, position
@@ -173,10 +175,27 @@ class StaticGrid:
         metrics.grid_round_duration.observe(time.time() - t0)
         return p
 
-    async def _execute(self, p: Plan) -> list[Place]:
-        """Carry the plan out; return the orders that actually went out."""
+    def _vanished(self, orders: list[dict], fills: list[dict]) -> str | None:
+        """Every order placed last round should be on the book or filled now. If
+        not one of them is, the bot is almost certainly reading another account
+        than it trades on -- an API wallet without the account it trades for does
+        exactly that. Every round would then see an empty book and buy a whole
+        layer again. One order cancelled by hand does not trigger this."""
+        if not self._placed_oids:
+            return None
+        seen = {int(o["oid"]) for o in orders if o.get("oid") is not None}
+        seen |= {int(f["oid"]) for f in fills}
+        if self._placed_oids & seen:
+            return None
+        return (f"none of the {len(self._placed_oids)} order(s) placed last round is on the "
+                f"book or filled -- the bot may be reading another account than the one it "
+                f"trades on (check wallet_address)")
+
+    async def _execute(self, p: Plan) -> tuple[list[Place], set[int]]:
+        """Carry the plan out; return the orders that went out, and their ids."""
         failed_cancels: set[int] = set()
         placed: list[Place] = []
+        oids: set[int] = set()
         for c in p.cancels:
             try:
                 await self.connector.cancel_order(self.coin, c.oid)
@@ -205,11 +224,12 @@ class StaticGrid:
                 continue
             if res.get("oid") is not None:
                 self._cloid_of[int(res["oid"])] = cloid
+                oids.add(int(res["oid"]))
             placed.append(pl)
             log.info(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} (cell {pl.cell})")
             metrics.grid_orders_placed_total.labels(coin=self.coin, side=pl.side).inc()
             metrics.grid_order_placement_latency.labels(coin=self.coin).observe(time.time() - t0)
-        return placed
+        return placed, oids
 
     # ── Reporting ─────────────────────────────────────────────────────────────
 

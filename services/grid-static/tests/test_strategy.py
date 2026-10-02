@@ -272,3 +272,45 @@ async def test_status_leaves_out_an_order_that_failed(grid, connector):
     connector.place_limit.side_effect = RuntimeError("rejected")
     await grid.run_round()
     assert all(c["state"] == "empty" for c in grid.status()["cells"])
+
+
+# ── reading the account it trades on ───────────────────────────────────────────
+
+async def test_orders_that_vanish_put_the_grid_on_hold(grid, connector, alerter):
+    # The connector reads one account while orders land on another -- an API
+    # wallet without its account address does exactly that. Every round would
+    # see an empty book and buy a full layer again. None of last round's orders
+    # being on the book or filled gives it away.
+    await grid.start()
+    await grid.run_round()                       # six buys go out
+    assert connector.place_limit.await_count == 6
+    connector.place_limit.reset_mock()
+    plan = await grid.run_round()                # the book still reads empty
+    assert plan.hold is not None and "account" in plan.hold
+    connector.place_limit.assert_not_called()
+    assert "grid_hold" in _alert_types(alerter)
+
+
+async def test_one_cancelled_order_is_not_a_wrong_account(grid, connector):
+    # Someone cancelling one order by hand is not the same thing.
+    await grid.start()
+    await grid.run_round()
+    placed = connector.place_limit.call_args_list
+    book = []
+    for i, call in enumerate(placed[1:], start=1):          # the first one was cancelled
+        kw = call.kwargs
+        book.append({"coin": "BTC", "oid": 500 + i, "cloid": kw["cloid"],
+                     "side": "B", "limitPx": str(kw["price"]), "sz": str(kw["sz"]),
+                     "origSz": str(kw["sz"]), "timestamp": START_MS})
+    connector.get_open_orders.return_value = book
+    plan = await grid.run_round()
+    assert plan.hold is None
+
+
+async def test_orders_that_filled_did_not_vanish(grid, connector):
+    await grid.start()
+    await grid.run_round()
+    connector.get_fills.return_value = [_fill(500 + i, BUY, 0.0, 100, START_MS + 1000)
+                                        for i in range(6)]
+    plan = await grid.run_round()
+    assert plan.hold is None or "account" not in plan.hold

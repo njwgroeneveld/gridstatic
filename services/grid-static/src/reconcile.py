@@ -94,7 +94,8 @@ def _sz(order: dict) -> float:
 def plan(*, levels: list[float], fp: bytes, orders: list[dict],
          fills: list[TaggedFill], position: float, price: float,
          size_usd: float, leverage: float, sz_decimals: int,
-         min_notional: float = 10.0) -> Plan:
+         min_notional: float = 10.0, forced_hold: str | None = None) -> Plan:
+    """forced_hold: a reason from outside this module to hold back new buys."""
     out = Plan()
     n_cells = len(levels) - 1
     tol = 10 ** -sz_decimals / 2
@@ -156,6 +157,8 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
     elif out.residual < -tol:
         out.hold = (f"resting sells of {covered:.6g} exceed what the position "
                     f"{position} can cover")
+    elif forced_hold:
+        out.hold = forced_hold
 
     # ── Sells: give every unsold coin an exit ─────────────────────────────────
     # Allowed on hold too, unless the position is already short of the sells.
