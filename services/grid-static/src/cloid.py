@@ -21,10 +21,11 @@ from dataclasses import dataclass
 
 BUY = "BUY"
 SELL = "SELL"
+STOP = "STOP"     # the grid's stop-loss; always cell 0
 
 _MAGIC = b"\x67\x73"
 _VERSION = 0x01
-_SIDE_BYTE = {BUY: 0x01, SELL: 0x02}
+_SIDE_BYTE = {BUY: 0x01, SELL: 0x02, STOP: 0x03}
 _BYTE_SIDE = {v: k for k, v in _SIDE_BYTE.items()}
 
 

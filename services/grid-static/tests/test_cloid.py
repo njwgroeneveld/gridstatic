@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from src.cloid import BUY, SELL, OrderTag, decode, encode, fingerprint
+from src.cloid import BUY, SELL, STOP, OrderTag, decode, encode, fingerprint
 
 FP = fingerprint("BTC", 75000, 83000, 20, 3)
 
@@ -83,3 +83,7 @@ def test_encode_refuses_a_cell_out_of_range():
 def test_encode_refuses_an_unknown_side():
     with pytest.raises(ValueError):
         encode(FP, 1, "LONG")
+
+
+def test_roundtrip_stop():
+    assert decode(encode(FP, 0, STOP)) == OrderTag(fingerprint=FP, cell=0, side=STOP)

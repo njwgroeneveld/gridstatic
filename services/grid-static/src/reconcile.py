@@ -25,7 +25,7 @@ Two rules carry the safety of it:
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from src.cloid import BUY, SELL, decode
+from src.cloid import BUY, SELL, STOP, decode
 
 # Within this fraction of a spacing below the price, a buy would sit on top of
 # the market. The old grid used the same margin.
@@ -94,8 +94,10 @@ def _sz(order: dict) -> float:
 def plan(*, levels: list[float], fp: bytes, orders: list[dict],
          fills: list[TaggedFill], position: float, price: float,
          size_usd: float, leverage: float, sz_decimals: int,
-         min_notional: float = 10.0, forced_hold: str | None = None) -> Plan:
-    """forced_hold: a reason from outside this module to hold back new buys."""
+         min_notional: float = 10.0, forced_hold: str | None = None,
+         stop_loss: float | None = None) -> Plan:
+    """forced_hold: a reason from outside this module to hold back new buys.
+    stop_loss: trigger price of the grid's stop, or None for no stop."""
     out = Plan()
     n_cells = len(levels) - 1
     tol = 10 ** -sz_decimals / 2
@@ -104,12 +106,16 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
     buys_in: dict[int, list[dict]] = defaultdict(list)
     sells_in: dict[int, list[dict]] = defaultdict(list)
     earlier_grid: list[dict] = []
+    stops_in: list[dict] = []
     for o in orders:
         tag = decode(o.get("cloid"))
         if tag is None:
             continue  # not ours: a manual order or another bot
         if tag.fingerprint != fp or not 0 <= tag.cell < n_cells:
             earlier_grid.append(o)
+            continue
+        if tag.side == STOP:
+            stops_in.append(o)
             continue
         (buys_in if tag.side == BUY else sells_in)[tag.cell].append(o)
 
@@ -141,6 +147,16 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
         since = _ts(sell[f.cell]) if f.cell in sell else last_sell_fill.get(f.cell, -1)
         if f.time > since:
             unsold[f.cell] += f.sz
+
+    # A flat position means no cell holds coin, whatever the fills say: a stop
+    # went off, or someone closed the position. The sells can no longer reduce
+    # anything (the exchange cancels such reduce-only orders itself, too). This
+    # does not depend on how the exchange names the fills of a triggered stop.
+    if abs(position) <= tol:
+        unsold.clear()
+        for cell, o in sorted(sell.items()):
+            out.cancels.append(Cancel(o["oid"], cell, SELL, "position is flat"))
+        sell.clear()
 
     covered = sum(_sz(o) for o in sell.values())
     out.residual = position - covered - sum(unsold.values())
@@ -177,6 +193,9 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
                 replaces = current["oid"]
             out.places.append(Place(cell, SELL, px, total, True, replaces))
 
+    # ── The stop: one, the size of the position, on hold too ──────────────────
+    _plan_stop(out, stops_in, position, stop_loss, sz_decimals, tol, min_notional)
+
     # ── Buys: every free cell below the price ─────────────────────────────────
     if out.hold is None:
         threshold = price - (levels[1] - levels[0]) * _NEAR_PRICE
@@ -204,3 +223,33 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
                                   _sz(b) if b else 0.0, _sz(s) if s else 0.0,
                                   round(u, sz_decimals), state))
     return out
+
+
+def _plan_stop(out: Plan, stops_in: list[dict], position: float, stop_loss: float | None,
+               sz_decimals: int, tol: float, min_notional: float) -> None:
+    """Keep exactly one stop on the exchange while the grid holds coin: reduce-only,
+    the size of the whole position, triggering at stop_loss. It lives on the
+    exchange so it still fires when the bot or its cluster is down. A hold stops
+    new buys; it never takes this protection away."""
+    stops_in.sort(key=_ts)
+    for o in stops_in[:-1]:
+        out.cancels.append(Cancel(o["oid"], 0, STOP, "second stop"))
+    current = stops_in[-1] if stops_in else None
+
+    want = stop_loss is not None and position > tol
+    size = round(position, sz_decimals) if want else 0.0
+    if want and size * stop_loss < min_notional:
+        want = False       # the exchange would refuse it; the next fill makes it big enough
+
+    if current is not None:
+        trigger = float(current.get("triggerPx") or 0)
+        fits = (want and abs(_sz(current) - size) <= tol
+                and abs(trigger - stop_loss) <= stop_loss * 2e-4)   # the connector rounds prices
+        if fits:
+            return
+        reason = "grown or moved" if want else "no position or no stop-loss"
+        out.cancels.append(Cancel(current["oid"], 0, STOP, reason))
+    if want:
+        out.places.append(Place(0, STOP, float(stop_loss), size, True,
+                                current["oid"] if current is not None else None))
+
