@@ -88,79 +88,26 @@ def test_send_telegram_no_credentials_no_crash():
         m._CHAT_ID = original_chat
 
 
-def test_handle_status_queries_only_static():
-    # This stack only has the static grid, so /status must ask for exactly one
-    # strategy; if it also asked for TRAILING it would report on grids that do not
-    # exist here.
+def test_handle_status_formats_what_grid_static_reports():
     import src.main as m
-
-    def fake_get(url, params=None, timeout=None):
-        resp = MagicMock()
-        resp.raise_for_status.return_value = None
-        resp.json.return_value = [] if url.endswith("/mids") else []
-        return resp
-
-    with patch("src.main._requests.get", side_effect=fake_get) as mock_get, \
-         patch("src.main._send_telegram"):
+    report = {"grids": [{"coin_key": "BTC-4", "coin": "BTC", "lower": 100.0, "upper": 140.0,
+                         "num_lines": 5, "leverage": 1, "size_usd": 50.0, "price": 125.0,
+                         "position": 0.0, "hold": None, "residual": 0.0, "realized_24h": 0.0,
+                         "last_round_ms": 1, "cells": []}]}
+    resp = MagicMock()
+    resp.json.return_value = report
+    with patch("src.main._requests.get", return_value=resp) as get,          patch("src.main._send_telegram") as send:
         m._handle_status()
-
-    config_calls = [c for c in mock_get.call_args_list
-                     if c.args and c.args[0].endswith("/grid-configs")]
-    strategies_requested = {c.kwargs["params"]["strategy"] for c in config_calls}
-    assert strategies_requested == {"STATIC"}
+    assert get.call_args.args[0] == f"{m._GRID_STATIC_URL}/status"
+    assert get.call_count == 1          # one call; no database, no connector
+    assert "BTC 5L" in send.call_args.args[0]
 
 
-def test_format_grid_status_shows_strategy_label():
-    from src.main import _format_grid_status
-
-    configs = [{"id": 1, "coin": "SOL", "strategy": "TRAILING", "upper": 80, "lower": 71,
-               "num_lines": 10, "shadow": True, "leverage": 1}]
-    text = _format_grid_status(configs, [], [], {}, {"SOL": 75.0})
-    assert "TRAILING" in text
-
-
-def test_format_grid_status_matches_orders_by_price_not_level_index():
-    # TrailingGrid stores an absolute, never-resetting level_seq (e.g. 37)
-    # instead of a 0-indexed array position, so matching must go by price.
-    from src.main import _format_grid_status
-
-    configs = [{"id": 1, "coin": "SOL", "strategy": "TRAILING", "upper": 80, "lower": 71,
-               "num_lines": 10, "shadow": True, "leverage": 1}]
-    # level 3 in the current window is price 74.0; tag it with an unrelated level number
-    orders = [{"grid_config_id": 1, "level": 37, "side": "BUY", "price": 74.0, "size_usd": 100.0}]
-    text = _format_grid_status(configs, orders, [], {}, {"SOL": 75.0})
-
-    assert "BUY $74" in text
-    assert "▫️ L3" not in text
-
-
-def test_handle_status_queries_grid_orders_with_explicit_status():
-    # Regression test: /status must never fetch grid-orders without a status
-    # filter, otherwise stale FILLED/CANCELLED rows can mask a currently OPEN
-    # order at the same level in _format_grid_status.
+def test_handle_status_when_grid_static_is_unreachable():
     import src.main as m
-
-    def fake_get(url, params=None, timeout=None):
-        resp = MagicMock()
-        resp.raise_for_status.return_value = None
-        if url.endswith("/grid-configs"):
-            resp.json.return_value = [{"id": 1, "coin": "BTC", "upper": 68000, "lower": 57000,
-                                       "num_lines": 10, "shadow": True, "leverage": 1}]
-        elif url.endswith("/mids"):
-            resp.json.return_value = {"BTC": 60000.0}
-        else:
-            resp.json.return_value = []
-        return resp
-
-    with patch("src.main._requests.get", side_effect=fake_get) as mock_get, \
-         patch("src.main._send_telegram"):
+    with patch("src.main._requests.get", side_effect=ConnectionError("down")),          patch("src.main._send_telegram") as send:
         m._handle_status()
-
-    order_calls = [c for c in mock_get.call_args_list
-                   if c.args and c.args[0].endswith("/grid-orders")]
-    assert order_calls, "expected at least one /grid-orders call"
-    for c in order_calls:
-        assert c.kwargs["params"].get("status") in ("OPEN", "FILLED")
+    assert "Could not reach grid-static" in send.call_args.args[0]
 
 
 def test_send_telegram_api_error_no_crash():
