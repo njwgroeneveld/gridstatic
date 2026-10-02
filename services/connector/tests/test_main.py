@@ -103,3 +103,20 @@ def test_perp_dexs_come_from_the_environment(monkeypatch):
     assert m._perp_dexs() == ["xyz", "flx"]
     monkeypatch.delenv("HYPERLIQUID_PERP_DEXS")
     assert m._perp_dexs() == []
+
+
+def test_stop_route_places_a_stop():
+    fake = MagicMock()
+    fake.place_stop_order.return_value = {"status": "ok", "oid": 5, "cloid": "0xab", "sz": 0.01, "px": 80000.0}
+    with patch("src.main._ex", return_value=fake):
+        r = client.post("/orders/stop", json={"coin": "BTC", "sz": 0.01, "trigger_px": 80000.0, "cloid": "0xab"})
+    assert r.status_code == 200
+    fake.place_stop_order.assert_called_once_with("BTC", 0.01, 80000.0, "0xab")
+
+
+def test_leverage_route_answers_502_when_refused():
+    fake = MagicMock()
+    fake.set_leverage.side_effect = RuntimeError("Invalid leverage value")
+    with patch("src.main._ex", return_value=fake):
+        r = client.put("/leverage/BTC", json={"leverage": 99})
+    assert r.status_code == 502 and "Invalid leverage" in r.json()["detail"]

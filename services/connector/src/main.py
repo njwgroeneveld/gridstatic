@@ -67,6 +67,13 @@ class LimitOrderReq(BaseModel):
     reduce_only: bool = False
 
 
+class StopOrderReq(BaseModel):
+    coin: str
+    sz: float
+    trigger_px: float
+    cloid: str | None = None
+
+
 class LeverageReq(BaseModel):
     leverage: int
 
@@ -154,6 +161,14 @@ def place_limit(req: LimitOrderReq):
     return result
 
 
+@app.post("/orders/stop")
+def place_stop(req: StopOrderReq):
+    result = _ex().place_stop_order(req.coin, req.sz, req.trigger_px, req.cloid)
+    if result["status"] != "ok":
+        raise HTTPException(status_code=502, detail=result.get("reason"))
+    return result
+
+
 @app.get("/orders/status/{oid}")
 def order_status(oid: int):
     try:
@@ -174,5 +189,10 @@ def cancel_order(coin: str, oid: str):
 
 @app.put("/leverage/{coin}")
 def set_leverage(coin: str, req: LeverageReq):
-    _ex().set_leverage(coin, req.leverage)
+    try:
+        _ex().set_leverage(coin, req.leverage)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
     return {"status": "ok"}

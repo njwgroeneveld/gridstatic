@@ -296,3 +296,45 @@ def test_account_value_of_a_hip3_dex_is_its_own_balance():
     client._info.user_state.side_effect = lambda addr, dex="": {
         "xyz": {"marginSummary": {"accountValue": "250.5"}}}[dex]
     assert client.get_account_value(dex="xyz") == 250.5
+
+
+# ── stop-loss and leverage ─────────────────────────────────────────────────────
+
+def test_place_stop_order_is_a_reduce_only_stop_market_sell():
+    client = _orderable_client(sz_decimals=4)
+    res = client.place_stop_order("BTC", 0.0019, 78123.4, cloid=CLOID)
+    args, kwargs = client._exchange.order.call_args
+    assert args[0] == "BTC" and args[1] is False and args[2] == 0.0019
+    assert args[4] == {"trigger": {"triggerPx": 78123.0, "isMarket": True, "tpsl": "sl"}}
+    assert kwargs["reduce_only"] is True and str(kwargs["cloid"]) == CLOID
+    assert res["status"] == "ok" and res["oid"] == 99
+
+
+def test_place_stop_order_caps_slippage_ten_percent_below_the_trigger():
+    # On a thin book a stop-market needs room to fill -- a bad fill beats none.
+    client = _orderable_client()
+    client.place_stop_order("BTC", 0.001, 80000.0, cloid=CLOID)
+    assert client._exchange.order.call_args[0][3] == 72000.0
+
+
+def test_place_stop_order_reports_a_rejection():
+    client = _orderable_client()
+    client._exchange.order.return_value = {
+        "status": "ok", "response": {"data": {"statuses": [{"error": "Reduce only order would increase position."}]}}}
+    assert client.place_stop_order("BTC", 0.001, 80000.0, cloid=CLOID)["status"] == "error"
+
+
+def test_set_leverage_raises_when_the_exchange_refuses():
+    # The SDK answers a refusal with status "err" instead of raising; logging it
+    # and carrying on left the bot sizing for a leverage that was never set.
+    client = _make_client()
+    client._exchange.update_leverage.return_value = {"status": "err", "response": "Invalid leverage value"}
+    with pytest.raises(RuntimeError, match="Invalid leverage"):
+        client.set_leverage("BTC", 99)
+
+
+def test_set_leverage_accepts_ok():
+    client = _make_client()
+    client._exchange.update_leverage.return_value = {"status": "ok", "response": {"type": "default"}}
+    client.set_leverage("BTC", 3)
+    client._exchange.update_leverage.assert_called_once_with(3, "BTC", is_cross=False)

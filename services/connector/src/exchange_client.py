@@ -127,10 +127,13 @@ class ExchangeClient:
         return records
 
     def set_leverage(self, coin: str, leverage: int) -> None:
-        try:
-            self._exchange.update_leverage(leverage, coin, is_cross=False)
-        except Exception as e:
-            log.warning(f"[{coin}] setting leverage failed: {e}")
+        """Isolated margin at the given leverage. Raises when the exchange refuses:
+        the SDK returns status "err" rather than raising, and carrying on would
+        leave the bot sizing for a leverage that was never set."""
+        result = self._exchange.update_leverage(leverage, coin, is_cross=False)
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            detail = result.get("response") if isinstance(result, dict) else result
+            raise RuntimeError(f"{coin}: setting {leverage}x refused: {detail}")
 
     def cancel_order(self, coin: str, oid: str) -> dict:
         try:
@@ -162,6 +165,31 @@ class ExchangeClient:
             oid = (statuses[0].get("resting", {}).get("oid")
                    or statuses[0].get("filled", {}).get("oid"))
             return {"status": "ok", "oid": oid, "cloid": cloid, "sz": sz, "px": px}
+        except Exception as e:
+            return {"status": "error", "reason": str(e)}
+
+    def place_stop_order(self, coin: str, sz: float, trigger_px: float,
+                         cloid: str | None = None) -> dict:
+        """A reduce-only stop-market sell: it lives on the exchange, so it fires even
+        when the bot is down. Its limit price caps slippage at 10% below the
+        trigger -- on a thin book a bad fill beats no fill."""
+        try:
+            sz = round(sz, self.get_sz_decimals(coin))
+            if sz <= 0:
+                return {"status": "error", "reason": "size rounds to zero"}
+            trigger = _round_price(trigger_px)
+            result = self._exchange.order(
+                coin, False, sz, _round_price(trigger * 0.9),
+                {"trigger": {"triggerPx": trigger, "isMarket": True, "tpsl": "sl"}},
+                reduce_only=True, cloid=Cloid.from_str(cloid) if cloid else None)
+            if result.get("status") != "ok":
+                return {"status": "error", "reason": str(result.get("response", "unknown"))}
+            statuses = result["response"]["data"]["statuses"]
+            if statuses and "error" in statuses[0]:
+                return {"status": "error", "reason": statuses[0]["error"]}
+            oid = (statuses[0].get("resting", {}).get("oid")
+                   or statuses[0].get("filled", {}).get("oid"))
+            return {"status": "ok", "oid": oid, "cloid": cloid, "sz": sz, "px": trigger}
         except Exception as e:
             return {"status": "error", "reason": str(e)}
 
