@@ -31,8 +31,9 @@ def format_alert(alert_type: str, bot: str, payload: dict) -> str:
         filled_price = payload.get("filled_price", 0)
         sell_price = payload.get("sell_price", 0)
         label = _grid_label(payload)
+        size = f"{payload['size']:g} @ " if payload.get("size") else ""
         return (f"✅ <b>[{label}] BUY filled</b>\n"
-                f"Fill: ${filled_price:,.2f} → SELL placed at ${sell_price:,.2f}")
+                f"Fill: {size}${filled_price:,.2f} → SELL placed at ${sell_price:,.2f}")
 
     if alert_type == "trade_closed":
         buy_price = payload.get("buy_price", 0)
@@ -40,8 +41,9 @@ def format_alert(alert_type: str, bot: str, payload: dict) -> str:
         profit = payload.get("profit_usd", 0)
         sign = "+" if profit >= 0 else ""
         label = _grid_label(payload)
+        size = f" | {payload['size']:g}" if payload.get("size") else ""
         return (f"💰 <b>[{label}] Trade CLOSED</b>\n"
-                f"Buy: ${buy_price:,.2f} → Sell: ${sell_price:,.2f}\n"
+                f"Buy: ${buy_price:,.2f} → Sell: ${sell_price:,.2f}{size}\n"
                 f"P&amp;L: {sign}${profit:.2f}")
 
     if alert_type == "grid_hold":

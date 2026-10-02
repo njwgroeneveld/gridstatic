@@ -433,3 +433,63 @@ async def test_a_refused_start_is_alerted_and_retried(grid, connector, alerter, 
     msgs = [c.args[1]["message"] for c in alerter.send_alert.call_args_list if c.args[0] == "error"]
     assert any("Invalid leverage" in m for m in msgs)
     assert connector.set_leverage.await_count == 2      # it tried again
+
+
+# ── one alert per order, not per piece ─────────────────────────────────────────
+
+async def test_a_buy_filled_in_pieces_is_announced_once_when_complete(grid, connector, alerter, clock):
+    # Seen live: one buy filled in three pieces across two rounds and sent three
+    # identical "BUY filled" messages.
+    await grid.start()
+    cloid3 = encode(grid.fp, 3, BUY)
+    connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "open"}
+    resting = _book_order(grid, 3, BUY, 0.14, oid=9, orig=0.38)
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5) + [resting]
+    connector.get_positions.return_value = {"BTC": {"szi": 0.24, "entry_px": 130.0}}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.10, 130, START_MS + 1000),
+                                        _fill(9, BUY, 0.14, 130, START_MS + 2000)]
+    await grid.run_round()
+    assert "buy_filled" not in _alert_types(alerter)          # still resting
+
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_fills.return_value.append(_fill(9, BUY, 0.14, 130, START_MS + 3000))
+    clock.ms += 30_000
+    await grid.run_round()
+    await grid.run_round()
+    filled = [c.args[1] for c in alerter.send_alert.call_args_list if c.args[0] == "buy_filled"]
+    assert len(filled) == 1
+    assert filled[0]["size"] == pytest.approx(0.38)
+
+
+async def test_a_sell_filled_in_pieces_closes_one_cycle(grid, connector, alerter):
+    statuses = {9: encode(grid.fp, 3, BUY), 10: encode(grid.fp, 3, SELL)}
+    connector.get_order_status.side_effect = lambda oid: {"oid": oid, "cloid": statuses[oid],
+                                                          "status": "filled"}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    await grid.start()
+    connector.get_fills.return_value = [
+        _fill(9, BUY, 0.38, 130, START_MS + 1000, fee="0.01"),
+        _fill(10, SELL, 0.20, 140, START_MS + 2000, fee="0.01"),
+        _fill(10, SELL, 0.18, 140, START_MS + 2500, fee="0.01"),
+    ]
+    await grid.run_round()
+    closed = [c.args[1] for c in alerter.send_alert.call_args_list if c.args[0] == "trade_closed"]
+    assert len(closed) == 1
+    # (140 - 130) * 0.38 - 0.01 buy fee - 0.02 sell fees
+    assert closed[0]["profit_usd"] == pytest.approx(3.77)
+    assert closed[0]["size"] == pytest.approx(0.38)
+
+
+async def test_a_sell_still_resting_is_not_announced_yet(grid, connector, alerter):
+    statuses = {9: encode(grid.fp, 3, BUY), 10: encode(grid.fp, 3, SELL)}
+    connector.get_order_status.side_effect = lambda oid: {"oid": oid, "cloid": statuses[oid],
+                                                          "status": "open"}
+    sell = _book_order(grid, 3, SELL, 0.18, oid=10, orig=0.38)
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5) + [sell]
+    connector.get_positions.return_value = {"BTC": {"szi": 0.18, "entry_px": 130.0}}
+    await grid.start()
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000),
+                                        _fill(10, SELL, 0.20, 140, START_MS + 2000)]
+    await grid.run_round()
+    assert "trade_closed" not in _alert_types(alerter)

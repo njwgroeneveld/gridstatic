@@ -137,3 +137,17 @@ def test_status_shows_the_stop_loss():
     without = format_grid_status([_grid(stop_loss=None)]).splitlines()
     assert any("per line | stop $90" in line for line in with_stop)
     assert not any("stop $" in line for line in without)
+
+
+def test_buy_filled_shows_the_size():
+    msg = format_alert("buy_filled", "grid-static",
+                       {"coin": "BTC", "num_lines": 10, "leverage": 5, "filled_price": 87000,
+                        "size": 0.00092, "sell_price": 88000})
+    assert "0.00092 @ $87,000.00" in msg and "[BTC 10L 5x]" in msg
+
+
+def test_trade_closed_shows_the_size():
+    msg = format_alert("trade_closed", "grid-static",
+                       {"coin": "BTC", "buy_price": 87000, "sell_price": 88000,
+                        "size": 0.00092, "profit_usd": 0.85})
+    assert "| 0.00092" in msg and "+$0.85" in msg

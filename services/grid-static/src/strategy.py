@@ -9,6 +9,7 @@ it costs a few lookups, never a wrong decision.
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from dataclasses import asdict
 
 from src import metrics
@@ -56,7 +57,8 @@ class StaticGrid:
         self.sz_decimals: int | None = None
 
         self._cloid_of: dict[int, str | None] = {}
-        self._announced_until_ms = self._now_ms()
+        self._started_ms = self._now_ms()
+        self._announced: dict[int, int] = {}    # oid -> fill time, see _announce_fills
         self._hold: str | None = None
         self._hold_alerted_ms = 0
         self._notice_alerted_ms: dict[str, int] = {}
@@ -85,7 +87,7 @@ class StaticGrid:
     async def start(self) -> None:
         self.sz_decimals = await self.connector.get_sz_decimals(self.coin)
         await self.connector.set_leverage(self.coin, int(self.leverage))
-        self._announced_until_ms = self._now_ms()
+        self._started_ms = self._now_ms()
         # Tie every recent fill to its cell before the first round, so that round
         # does not go on hold over fills it simply had not looked up yet.
         try:
@@ -185,7 +187,7 @@ class StaticGrid:
                  sz_decimals=self.sz_decimals, min_notional=MIN_NOTIONAL,
                  forced_hold=self._vanished(orders, fills), stop_loss=self.stop_loss)
         placed, self._placed_oids = await self._execute(p)
-        await self._report(p, tied, price)
+        await self._report(p, tied, price, {int(o["oid"]) for o in orders if o.get("oid") is not None})
         await self._report_stop(position, price, placed)
 
         self.last_plan, self.last_price, self.last_position = p, price, position
@@ -256,7 +258,8 @@ class StaticGrid:
 
     # ── Reporting ─────────────────────────────────────────────────────────────
 
-    async def _report(self, p: Plan, tied: list[tuple[TaggedFill, dict]], price: float) -> None:
+    async def _report(self, p: Plan, tied: list[tuple[TaggedFill, dict]], price: float,
+                      open_oids: set[int]) -> None:
         now = self._now_ms()
 
         if p.hold and (self._hold is None or now - self._hold_alerted_ms >= _REPEAT_MS):
@@ -271,7 +274,7 @@ class StaticGrid:
         for msg in p.alerts:
             await self._notice(msg)
 
-        await self._announce_fills(tied)
+        await self._announce_fills(tied, open_oids)
         self.realized_24h = round(sum(
             self._cycle(t, f, tied)[1] or 0.0 for t, f in tied
             if t.side == SELL and t.time >= now - _DAY_MS), 2)
@@ -309,28 +312,47 @@ class StaticGrid:
             await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
             self._notice_alerted_ms[key] = now
 
-    async def _announce_fills(self, tied: list[tuple[TaggedFill, dict]]) -> None:
-        """Only fills since the start: after a restart the history is still on the
-        exchange, and announcing it again would be noise."""
-        new = sorted(((t, f) for t, f in tied if t.time > self._announced_until_ms),
-                     key=lambda x: x[0].time)
-        for t, f in new:
-            px = float(f["px"])
-            metrics.grid_fills_total.labels(coin=self.coin, side=t.side).inc()
-            if t.side == BUY:
+    async def _announce_fills(self, tied: list[tuple[TaggedFill, dict]],
+                              open_oids: set[int]) -> None:
+        """One alert per order, once it is complete. The exchange fills an order
+        in as many pieces as it likes; announcing each piece sent the same
+        message three times. Only fills since the start: after a restart the
+        history is still on the exchange, and announcing it again is noise."""
+        pieces_of: dict[int, list[tuple[TaggedFill, dict]]] = defaultdict(list)
+        for t, f in tied:
+            if t.time > self._started_ms and t.side in (BUY, SELL):
+                pieces_of[int(f["oid"])].append((t, f))
+        done = [(oid, sorted(ps, key=lambda x: x[0].time)) for oid, ps in pieces_of.items()
+                if oid not in self._announced and oid not in open_oids]
+        for oid, pieces in sorted(done, key=lambda d: d[1][-1][0].time):
+            self._announced[oid] = pieces[-1][0].time
+            first = pieces[0][0]
+            size = sum(t.sz for t, _ in pieces)
+            px = (sum(t.sz * float(f["px"]) for t, f in pieces) / size if size
+                  else float(pieces[-1][1]["px"]))
+            metrics.grid_fills_total.labels(coin=self.coin, side=first.side).inc()
+            if first.side == BUY:
                 await self.alerter.send_alert("buy_filled", {
-                    **self._label(), "filled_price": px, "sell_price": self.levels[t.cell + 1]})
-            else:
-                buy_px, profit = self._cycle(t, f, tied)
-                if profit is None:
-                    profit = round(float(f.get("closedPnl") or 0) - float(f.get("fee") or 0), 2)
-                await self.alerter.send_alert("trade_closed", {
-                    **self._label(), "buy_price": buy_px or 0.0, "sell_price": px,
-                    "profit_usd": profit})
-                metrics.grid_trades_closed_total.labels(coin=self.coin).inc()
-                metrics.grid_profit_usd.labels(coin=self.coin).inc(profit)
-        if new:
-            self._announced_until_ms = new[-1][0].time
+                    **self._label(), "filled_price": round(px, 8), "size": round(size, 8),
+                    "sell_price": self.levels[first.cell + 1]})
+                continue
+            profit, buy_px = 0.0, None
+            for t, f in pieces:
+                b_px, piece_profit = self._cycle(t, f, tied)
+                if piece_profit is None:   # its buys are older than the look-back
+                    piece_profit = float(f.get("closedPnl") or 0) - float(f.get("fee") or 0)
+                profit += piece_profit
+                buy_px = buy_px or b_px
+            profit = round(profit, 2)
+            await self.alerter.send_alert("trade_closed", {
+                **self._label(), "buy_price": buy_px or 0.0, "sell_price": round(px, 8),
+                "size": round(size, 8), "profit_usd": profit})
+            metrics.grid_trades_closed_total.labels(coin=self.coin).inc()
+            metrics.grid_profit_usd.labels(coin=self.coin).inc(profit)
+        # Forget orders older than the look-back: their fills are gone from it too.
+        horizon = self._now_ms() - self.lookback_ms
+        for oid in [o for o, t in self._announced.items() if t < horizon]:
+            del self._announced[oid]
 
     @staticmethod
     def _cycle(sell: TaggedFill, raw: dict,
@@ -356,7 +378,7 @@ class StaticGrid:
         share = min(1.0, sell.sz / run_sz)
         profit = ((float(raw["px"]) - buy_px) * sell.sz
                   - float(raw.get("fee") or 0) - run_fee * share)
-        return round(buy_px, 8), round(profit, 2)
+        return round(buy_px, 8), profit
 
     async def _report_price(self, price: float) -> None:
         lower, upper = self.levels[0], self.levels[-1]
