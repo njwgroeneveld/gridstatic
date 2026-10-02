@@ -242,3 +242,33 @@ async def test_status_shows_the_last_round(grid, connector):
 async def test_status_before_the_first_round(grid):
     s = grid.status()
     assert s["cells"] == [] and s["last_round_ms"] is None
+
+
+async def test_status_includes_what_the_round_just_placed(grid, connector):
+    # The round reads the book before it acts. Without this, /status right after
+    # startup shows every cell empty while six buys are already resting.
+    await grid.start()
+    await grid.run_round()
+    states = {c["cell"]: c["state"] for c in grid.status()["cells"]}
+    assert [states[i] for i in range(6)] == ["buy"] * 6
+    assert states[6] == "empty"
+    assert grid.status()["cells"][3]["buy_sz"] == 0.38
+
+
+async def test_status_shows_a_new_sell_as_covering_the_cell(grid, connector):
+    await grid.start()
+    cloid3 = encode(grid.fp, 3, BUY)
+    connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
+    await grid.run_round()
+    cell3 = grid.status()["cells"][3]
+    assert cell3["state"] == "sell" and cell3["sell_sz"] == 0.38 and cell3["unsold"] == 0.0
+
+
+async def test_status_leaves_out_an_order_that_failed(grid, connector):
+    await grid.start()
+    connector.place_limit.side_effect = RuntimeError("rejected")
+    await grid.run_round()
+    assert all(c["state"] == "empty" for c in grid.status()["cells"])

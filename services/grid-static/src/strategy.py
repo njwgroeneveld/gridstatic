@@ -15,7 +15,7 @@ from src import metrics
 from src.alert_throttle import OutsideGridThrottle
 from src.cloid import BUY, SELL, decode, encode, fingerprint
 from src.grid_math import calculate_levels, calculate_size_usd
-from src.reconcile import Plan, TaggedFill, plan
+from src.reconcile import Place, Plan, TaggedFill, plan
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ class StaticGrid:
         self._edge = OutsideGridThrottle()
 
         self.last_plan: Plan | None = None
+        self._last_placed: list[Place] = []
         self.last_round_ms: int | None = None
         self.last_price: float | None = None
         self.last_position: float | None = None
@@ -163,16 +164,19 @@ class StaticGrid:
                  fills=[t for t, _ in tied], position=position, price=price,
                  size_usd=self.size_usd, leverage=self.leverage,
                  sz_decimals=self.sz_decimals, min_notional=MIN_NOTIONAL)
-        await self._execute(p)
+        placed = await self._execute(p)
         await self._report(p, tied, price)
 
         self.last_plan, self.last_price, self.last_position = p, price, position
+        self._last_placed = placed
         self.last_round_ms = self._now_ms()
         metrics.grid_round_duration.observe(time.time() - t0)
         return p
 
-    async def _execute(self, p: Plan) -> None:
+    async def _execute(self, p: Plan) -> list[Place]:
+        """Carry the plan out; return the orders that actually went out."""
         failed_cancels: set[int] = set()
+        placed: list[Place] = []
         for c in p.cancels:
             try:
                 await self.connector.cancel_order(self.coin, c.oid)
@@ -201,9 +205,11 @@ class StaticGrid:
                 continue
             if res.get("oid") is not None:
                 self._cloid_of[int(res["oid"])] = cloid
+            placed.append(pl)
             log.info(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} (cell {pl.cell})")
             metrics.grid_orders_placed_total.labels(coin=self.coin, side=pl.side).inc()
             metrics.grid_order_placement_latency.labels(coin=self.coin).observe(time.time() - t0)
+        return placed
 
     # ── Reporting ─────────────────────────────────────────────────────────────
 
@@ -341,5 +347,20 @@ class StaticGrid:
             "residual": p.residual if p else None,
             "realized_24h": self.realized_24h,
             "last_round_ms": self.last_round_ms,
-            "cells": [asdict(c) for c in p.cells] if p else [],
+            "cells": self._cells_after_round(),
         }
+
+    def _cells_after_round(self) -> list[dict]:
+        """The cells as the book stands after the last round. The round read the
+        book before it acted; without the orders it placed, /status right after
+        startup shows every cell empty while the buys are already resting."""
+        if self.last_plan is None:
+            return []
+        cells = {c.cell: asdict(c) for c in self.last_plan.cells}
+        for pl in self._last_placed:
+            c = cells[pl.cell]
+            if pl.side == BUY:
+                c.update(state="buy" if c["state"] == "empty" else c["state"], buy_sz=pl.sz)
+            else:
+                c.update(state="sell", sell_sz=pl.sz, unsold=0.0)
+        return [cells[i] for i in sorted(cells)]
