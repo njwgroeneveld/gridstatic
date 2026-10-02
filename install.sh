@@ -8,7 +8,7 @@
 # One question: your Hyperliquid testnet key -- plus, if you like, a Telegram bot
 # for alerts. Everything else has a default, and every order goes to testnet --
 # nothing here costs real money. Moving to mainnet is a manual step described in
-# the README, deliberately not a script.
+# docs/operations.md, deliberately not a script.
 
 set -euo pipefail
 
@@ -238,7 +238,7 @@ EOF
       printf '\n'
       TG_ENABLED=1
       ;;
-    *) ok "skipped -- 'Telegram alerts' in the README adds it later" ;;
+    *) ok "skipped -- 'Telegram alerts' in docs/operations.md adds it later" ;;
   esac
 else
   # No terminal (CI, a pipe): never wait for an answer that cannot come.
@@ -305,7 +305,7 @@ else
 # Created by install.sh. There is no key in here: it lives in the Secret
 # $HL_SECRET. You can keep this file and put it under version control.
 hyperliquid:
-  # true: every order goes to testnet. See 'Going to mainnet' in the README
+  # true: every order goes to testnet. See 'Going to mainnet' in docs/operations.md
   # before you change this.
   testnet: true
   existingSecret: $HL_SECRET
@@ -436,7 +436,7 @@ if [ "$problems" = 0 ]; then
   Change your grids: edit $VALUES_FILE, then run
     helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
 
-  Trading with real money: see 'Going to mainnet' in the README. That step is
+  Trading with real money: see 'Going to mainnet' in docs/operations.md. That step is
   manual on purpose -- it is not something you want to do quickly.
 EOF
 else

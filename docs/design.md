@@ -241,7 +241,7 @@ place its orders at prices that do not exist on testnet.
 ### Testnet by default; mainnet by hand
 
 A fresh installation trades on testnet. Moving to mainnet is a step you want to take slowly,
-with your own eyes on what changes, so it is described in the README rather than scripted.
+with your own eyes on what changes, so it is described in [operations.md](operations.md#going-to-mainnet) rather than scripted.
 
 ### One replica, Recreate strategy
 

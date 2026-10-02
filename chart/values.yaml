@@ -16,7 +16,7 @@ images:
 # install with in a Secret in your cluster (sh.helm.release.v1.<name>.v1), and
 # `helm get values` prints them back. What is not in here cannot leak from there.
 #
-# See the README for the commands that create these Secrets.
+# docs/operations.md has the commands that create these Secrets.
 
 hyperliquid:
   # true: every order goes to Hyperliquid's testnet. Leave it on until the grid

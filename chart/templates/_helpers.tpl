@@ -7,7 +7,7 @@ or in `helm get values`.
 {{- if .Values.hyperliquid.existingSecret -}}
 {{ .Values.hyperliquid.existingSecret }}
 {{- else -}}
-{{- fail "hyperliquid.existingSecret is empty. Create a Secret with the keys 'private_key' and 'wallet_address' first -- install.sh does this for you, or follow 'The Hyperliquid secret' in the README -- and set hyperliquid.existingSecret to its name. hyperliquid.testnet is true by default: use a testnet key to try the bot." -}}
+{{- fail "hyperliquid.existingSecret is empty. Create a Secret with the keys 'private_key' and 'wallet_address' first -- install.sh does this for you, or follow 'Manual installation' in docs/operations.md -- and set hyperliquid.existingSecret to its name. hyperliquid.testnet is true by default: use a testnet key to try the bot." -}}
 {{- end -}}
 {{- end -}}
 
