@@ -48,16 +48,27 @@ class InfoClient:
         data = self._post({"type": "allMids"})
         return {k: float(v) for k, v in data.items() if v is not None}
 
+    def get_mark_price(self, coin: str) -> float:
+        """The mark price, not the mid. On a thin book the mid is just the middle
+        of a wide spread -- and a grid's own buys move it, so it would chase its
+        own orders. The mark price is anchored to the oracle."""
+        dex = coin.split(":", 1)[0] if ":" in coin else ""
+        meta, ctxs = self._post({"type": "metaAndAssetCtxs", "dex": dex})
+        for asset, ctx in zip(meta["universe"], ctxs):
+            if asset["name"] == coin:
+                return float(ctx["markPx"])
+        raise KeyError(f"{coin} is not listed on dex '{dex}'")
+
     def get_sz_decimals(self, coin: str) -> int:
         if not hasattr(self, "_sz_cache"):
             self._sz_cache: dict[str, int] = {}
         if coin not in self._sz_cache:
-            meta = self._post({"type": "meta"})
+            dex = coin.split(":", 1)[0] if ":" in coin else ""
+            meta = self._post({"type": "meta", "dex": dex})
             for asset in meta.get("universe", []):
                 if asset["name"] == coin:
                     self._sz_cache[coin] = asset["szDecimals"]
                     break
             else:
-                self._sz_cache[coin] = 3
+                raise KeyError(f"{coin} is not listed on dex '{dex}'")
         return self._sz_cache[coin]
-

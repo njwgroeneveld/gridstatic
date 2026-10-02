@@ -31,6 +31,12 @@ _TESTNET = os.getenv("HYPERLIQUID_TESTNET", "true").lower() != "false"
 _exchange: ExchangeClient | None = None
 
 
+def _perp_dexs() -> list[str]:
+    """HIP-3 dexes the grids trade on, e.g. "xyz" for xyz:XYZ100. The chart
+    derives them from the configured coins."""
+    return [d.strip() for d in os.getenv("HYPERLIQUID_PERP_DEXS", "").split(",") if d.strip()]
+
+
 def _ex() -> ExchangeClient:
     """Built on first use, not at import. The SDK fetches metadata over the
     network while constructing, so a DNS hiccup during pod start used to leave
@@ -43,7 +49,8 @@ def _ex() -> ExchangeClient:
     if not _PRIVATE_KEY:
         raise HTTPException(status_code=503, detail="HL_PRIVATE_KEY not configured")
     try:
-        _exchange = ExchangeClient(_PRIVATE_KEY, _WALLET_ADDRESS, _TESTNET)
+        _exchange = ExchangeClient(_PRIVATE_KEY, _WALLET_ADDRESS, _TESTNET,
+                                   perp_dexs=_perp_dexs())
     except Exception as e:
         log.error(f"building ExchangeClient failed: {e}")
         raise HTTPException(status_code=503, detail=f"exchange unreachable: {e}")
@@ -83,8 +90,18 @@ def get_mids():
 
 
 @app.get("/account/value")
-def get_account_value():
-    return {"account_value": _ex().get_account_value()}
+def get_account_value(dex: str = Query("")):
+    return {"account_value": _ex().get_account_value(dex=dex)}
+
+
+@app.get("/price/{coin}")
+def get_price(coin: str):
+    """The mark price. A grid decides which lines sit below the price from this,
+    not from the mid: on a thin book the mid moves with the grid's own orders."""
+    try:
+        return {"coin": coin, "mark_px": _info.get_mark_price(coin)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/positions")

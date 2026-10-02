@@ -196,3 +196,103 @@ def test_get_order_status_raises_when_the_exchange_cannot_be_read():
     client._info.query_order_by_oid.side_effect = ConnectionError("down")
     with pytest.raises(ConnectionError):
         client.get_order_status(5)
+
+
+# ── HIP-3: markets on a builder-deployed perp dex, e.g. xyz:XYZ100 ────────────
+
+def _hip3_client() -> ExchangeClient:
+    with patch("src.exchange_client.Account") as mock_acct, \
+         patch("src.exchange_client.Info") as info, \
+         patch("src.exchange_client.Exchange") as exchange:
+        mock_acct.from_key.return_value = MagicMock(address="0xTEST")
+        client = ExchangeClient(private_key="0x" + "a" * 64, testnet=True, perp_dexs=["xyz"])
+    client._built_with = (info.call_args, exchange.call_args)
+    client._info = MagicMock()
+    client._exchange = MagicMock()
+    return client
+
+
+def test_the_sdk_learns_the_extra_dex_next_to_the_default_one():
+    # Without it the SDK cannot turn "xyz:XYZ100" into an asset id, and every
+    # order on that market fails.
+    info_call, exchange_call = _hip3_client()._built_with
+    assert info_call.kwargs["perp_dexs"] == ["", "xyz"]
+    assert exchange_call.kwargs["perp_dexs"] == ["", "xyz"]
+
+
+def test_without_extra_dexes_the_sdk_gets_the_default_only():
+    with patch("src.exchange_client.Account") as mock_acct, \
+         patch("src.exchange_client.Info") as info, patch("src.exchange_client.Exchange"):
+        mock_acct.from_key.return_value = MagicMock(address="0xTEST")
+        ExchangeClient(private_key="0x" + "a" * 64, testnet=True)
+    assert info.call_args.kwargs["perp_dexs"] == [""]
+
+
+def test_open_orders_of_a_hip3_coin_are_read_from_its_dex():
+    client = _hip3_client()
+    client._info.frontend_open_orders.return_value = [{"coin": "xyz:XYZ100", "oid": 1},
+                                                      {"coin": "xyz:TSLA", "oid": 2}]
+    assert [o["oid"] for o in client.get_open_orders("xyz:XYZ100")] == [1]
+    client._info.frontend_open_orders.assert_called_once_with("0xTEST", dex="xyz")
+
+
+def test_positions_cover_every_dex_under_their_full_name():
+    client = _hip3_client()
+    states = {
+        "": {"assetPositions": [{"position": {"coin": "BTC", "szi": "0.01", "entryPx": "1"}}]},
+        "xyz": {"assetPositions": [{"position": {"coin": "xyz:XYZ100", "szi": "0.002",
+                                                 "entryPx": "30000"}}]},
+    }
+    client._info.user_state.side_effect = lambda addr, dex="": states[dex]
+    pos = client.get_open_positions()
+    assert pos["BTC"]["szi"] == 0.01
+    assert pos["xyz:XYZ100"]["szi"] == 0.002
+
+
+def test_a_position_named_without_its_dex_prefix_still_gets_it():
+    # Whether the exchange prefixes coin names in clearinghouseState is not
+    # something to bet the position check on.
+    client = _hip3_client()
+    states = {"": {"assetPositions": []},
+              "xyz": {"assetPositions": [{"position": {"coin": "XYZ100", "szi": "0.002",
+                                                       "entryPx": "30000"}}]}}
+    client._info.user_state.side_effect = lambda addr, dex="": states[dex]
+    assert "xyz:XYZ100" in client.get_open_positions()
+
+
+def test_an_unreadable_dex_is_never_an_empty_position():
+    client = _hip3_client()
+
+    def state(addr, dex=""):
+        if dex == "xyz":
+            raise ConnectionError("down")
+        return {"assetPositions": []}
+
+    client._info.user_state.side_effect = state
+    with pytest.raises(ConnectionError):
+        client.get_open_positions()
+
+
+def test_lot_size_of_a_hip3_coin_comes_from_its_dex():
+    client = _hip3_client()
+    client._info.meta.side_effect = lambda dex="": {
+        "": {"universe": [{"name": "BTC", "szDecimals": 5}]},
+        "xyz": {"universe": [{"name": "xyz:XYZ100", "szDecimals": 4}]},
+    }[dex]
+    assert client.get_sz_decimals("xyz:XYZ100") == 4
+    assert client.get_sz_decimals("BTC") == 5
+
+
+def test_an_unknown_coin_has_no_lot_size_rather_than_a_guess():
+    # Guessing 3 decimals sized orders for a market nobody checked.
+    client = _hip3_client()
+    client._info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
+    with pytest.raises(KeyError):
+        client.get_sz_decimals("DOGE")
+
+
+def test_account_value_of_a_hip3_dex_is_its_own_balance():
+    client = _hip3_client()
+    client._info.user_state.side_effect = lambda addr, dex="": {
+        "xyz": {"marginSummary": {"accountValue": "250.5"}}}[dex]
+    assert client.get_account_value(dex="xyz") == 250.5

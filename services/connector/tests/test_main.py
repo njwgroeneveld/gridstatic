@@ -73,3 +73,33 @@ def test_positions_route_answers_502_when_the_exchange_is_unreadable():
 @pytest.mark.parametrize("path", ["/orders/tp", "/orders/sl", "/positions/BTC/close"])
 def test_routes_the_grid_never_used_are_gone(path):
     assert client.post(path, json={}).status_code in (404, 405)
+
+
+def test_price_route_gives_the_mark_price():
+    with patch("src.main._info.get_mark_price", return_value=30499.0) as mark:
+        r = client.get("/price/xyz:XYZ100")
+    assert r.status_code == 200
+    assert r.json() == {"coin": "xyz:XYZ100", "mark_px": 30499.0}
+    mark.assert_called_once_with("xyz:XYZ100")
+
+
+def test_price_route_answers_502_when_unreadable():
+    with patch("src.main._info.get_mark_price", side_effect=ConnectionError("down")):
+        assert client.get("/price/BTC").status_code == 502
+
+
+def test_account_value_route_takes_a_dex():
+    fake = MagicMock()
+    fake.get_account_value.return_value = 250.5
+    with patch("src.main._ex", return_value=fake):
+        r = client.get("/account/value", params={"dex": "xyz"})
+    assert r.json() == {"account_value": 250.5}
+    fake.get_account_value.assert_called_once_with(dex="xyz")
+
+
+def test_perp_dexs_come_from_the_environment(monkeypatch):
+    import src.main as m
+    monkeypatch.setenv("HYPERLIQUID_PERP_DEXS", "xyz, flx ,,")
+    assert m._perp_dexs() == ["xyz", "flx"]
+    monkeypatch.delenv("HYPERLIQUID_PERP_DEXS")
+    assert m._perp_dexs() == []

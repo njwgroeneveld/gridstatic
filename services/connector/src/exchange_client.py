@@ -13,6 +13,16 @@ _TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 _MAINNET_URL = "https://api.hyperliquid.xyz"
 
 
+def dex_of(coin: str) -> str:
+    """The perp dex a coin trades on: "xyz" for a HIP-3 market such as
+    "xyz:XYZ100", "" for the default dex."""
+    return coin.split(":", 1)[0] if ":" in coin else ""
+
+
+def _full_name(coin: str, dex: str) -> str:
+    return f"{dex}:{coin}" if dex and ":" not in coin else coin
+
+
 def _round_price(price: float, sig: int = 5) -> float:
     if price == 0:
         return 0.0
@@ -22,26 +32,38 @@ def _round_price(price: float, sig: int = 5) -> float:
 
 
 class ExchangeClient:
-    def __init__(self, private_key: str, wallet_address: str = None, testnet: bool = True):
+    def __init__(self, private_key: str, wallet_address: str = None, testnet: bool = True,
+                 perp_dexs: list[str] | None = None):
         base_url = _TESTNET_URL if testnet else _MAINNET_URL
         self._account = Account.from_key(private_key)
         self._wallet_address = wallet_address or self._account.address
-        self._info = Info(base_url, skip_ws=True)
-        self._exchange = Exchange(self._account, base_url, vault_address=wallet_address)
+        # The default dex plus every HIP-3 dex a grid trades on. The SDK needs
+        # them to turn a name like "xyz:XYZ100" into an asset id.
+        self._dexes = [""] + [d for d in (perp_dexs or []) if d]
+        self._info = Info(base_url, skip_ws=True, perp_dexs=self._dexes)
+        self._exchange = Exchange(self._account, base_url, vault_address=wallet_address,
+                                  perp_dexs=self._dexes)
         self._sz_cache: dict[str, int] = {}
 
     def get_sz_decimals(self, coin: str) -> int:
+        """Raises KeyError for a coin the dex does not list: guessing a lot size
+        sizes orders for a market nobody checked."""
         if coin not in self._sz_cache:
-            meta = self._info.meta()
+            meta = self._info.meta(dex=dex_of(coin))
             for asset in meta.get("universe", []):
                 if asset["name"] == coin:
                     self._sz_cache[coin] = asset["szDecimals"]
                     break
             else:
-                self._sz_cache[coin] = 3
+                raise KeyError(f"{coin} is not listed on dex '{dex_of(coin)}'")
         return self._sz_cache[coin]
 
-    def get_account_value(self) -> float:
+    def get_account_value(self, dex: str = "") -> float:
+        """A HIP-3 dex keeps a balance of its own; only the default dex shares
+        with spot USDC."""
+        if dex:
+            state = self._info.user_state(self._wallet_address, dex=dex)
+            return float(state.get("marginSummary", {}).get("accountValue", 0.0))
         spot = self._info.spot_user_state(self._wallet_address)
         usdc_total, usdc_hold = 0.0, 0.0
         for b in spot.get("balances", []):
@@ -54,22 +76,27 @@ class ExchangeClient:
         return (usdc_total - usdc_hold) + perps_value
 
     def get_open_positions(self) -> dict[str, dict]:
-        state = self._info.user_state(self._wallet_address)
+        """Positions on every dex this client knows, under their full name. Any dex
+        that cannot be read raises: an unreadable position is never a flat one."""
         result = {}
-        for pos in state.get("assetPositions", []):
-            p = pos.get("position", {})
-            coin = p.get("coin")
-            szi = float(p.get("szi") or 0)
-            if coin and abs(szi) > 0:
-                result[coin] = {"szi": szi, "entry_px": float(p.get("entryPx") or 0)}
+        for dex in self._dexes:
+            state = self._info.user_state(self._wallet_address, dex=dex)
+            for pos in state.get("assetPositions", []):
+                p = pos.get("position", {})
+                coin = p.get("coin")
+                szi = float(p.get("szi") or 0)
+                if coin and abs(szi) > 0:
+                    result[_full_name(coin, dex)] = {"szi": szi,
+                                                     "entry_px": float(p.get("entryPx") or 0)}
         return result
 
     def get_open_orders(self, coin: str) -> list[dict]:
         """Raises when the exchange cannot be read. Swallowing that into an empty
         list made "API unreachable" indistinguishable from "no orders", and
         recover_state reads an empty book as "alles is gevuld"."""
-        orders = self._info.frontend_open_orders(self._wallet_address)
-        return [o for o in (orders or []) if o.get("coin") == coin]
+        dex = dex_of(coin)
+        orders = self._info.frontend_open_orders(self._wallet_address, dex=dex)
+        return [o for o in (orders or []) if _full_name(o.get("coin", ""), dex) == coin]
 
     def get_fills_since(self, coin: str, since_ms: int) -> list[dict]:
         """Raises for the same reason: the caller advances a watermark on the
