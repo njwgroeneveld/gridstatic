@@ -59,6 +59,11 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict, float]], list[str]]:
                           f"the exchange keeps one position per coin per account, and two "
                           f"grids cannot tell theirs apart.")
         owner_of.setdefault(coin, key)
+        lev = c.get("leverage", 1)
+        if not isinstance(lev, (int, float)) or isinstance(lev, bool) or lev < 1:
+            errors.append(f"{key}: leverage {lev!r} must be a number of at least 1 "
+                          f"(1 = no leverage). Leave it out for 1x.")
+            continue
         stop = c.get("stop_loss")
         if stop is not None:
             if (not isinstance(stop, (int, float)) or isinstance(stop, bool)

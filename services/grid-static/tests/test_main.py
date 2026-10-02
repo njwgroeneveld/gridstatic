@@ -188,3 +188,18 @@ def test_a_stop_loss_not_below_the_grid_refuses_to_start(stop):
 def test_a_stop_loss_below_the_grid_is_accepted():
     grids, _ = m._validate(_cfg({"BTC-20": _grid(stop_loss=72000)}))
     assert grids[0][1]["stop_loss"] == 72000
+
+
+@pytest.mark.parametrize("lev", [None, 0, -2, "3x", True])
+def test_an_invalid_leverage_refuses_to_start(lev):
+    # An empty leverage used to crash the start with a TypeError instead of
+    # saying what is wrong.
+    with pytest.raises(m.ConfigError, match="leverage"):
+        m._validate(_cfg({"BTC-20": _grid(leverage=lev)}))
+
+
+def test_leverage_left_out_means_1x():
+    g = _grid()
+    del g["leverage"]
+    grids, _ = m._validate(_cfg({"BTC-20": g}, start_balance=1000))
+    assert grids[0][0] == "BTC-20"

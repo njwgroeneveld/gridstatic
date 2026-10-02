@@ -31,7 +31,7 @@ data:
         upper: {{ $c.upper }}
         lower: {{ $c.lower }}
         num_lines: {{ $c.numLines }}
-        leverage: {{ $c.leverage }}
+        leverage: {{ $c.leverage | default 1 }}
         {{- if $c.stopLoss }}
         stop_loss: {{ $c.stopLoss }}
         {{- end }}
