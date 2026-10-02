@@ -15,7 +15,7 @@ jobs:
       contents: read
       packages: write
     env:
-      KEY: --set hyperliquid.existingSecret=test-hl-secret
+      KEY: -f chart/ci/test-values.yaml
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -30,11 +30,25 @@ jobs:
         run: |
           # Check the reason too: a template that breaks for some other reason
           # would pass a bare "does it fail" check.
-          if out=$(helm template t ./chart 2>&1); then
+          if out=$(helm template t ./chart $KEY --set hyperliquid.existingSecret= 2>&1); then
             echo "ERROR: the chart renders without hyperliquid.existingSecret"
             exit 1
           fi
           echo "$out" | grep -q "hyperliquid.existingSecret is empty"
+
+      - name: Refuse to render without an active grid
+        run: |
+          # No default grid on purpose: Helm merges maps, so a default would run
+          # next to the user's own grids without them knowing.
+          if out=$(helm template t ./chart --set hyperliquid.existingSecret=x 2>&1); then
+            echo "ERROR: the chart renders without any grid"
+            exit 1
+          fi
+          echo "$out" | grep -q "no active grid"
+
+      - name: The HIP-3 dex reaches the connector
+        run: |
+          helm template t ./chart $KEY --set grid.coins.NDX.coin=xyz:XYZ100             --set grid.coins.NDX.active=true --set grid.coins.NDX.allocationPct=100             --set grid.coins.NDX.upper=32000 --set grid.coins.NDX.lower=29000             --set grid.coins.NDX.numLines=20 --set grid.coins.NDX.leverage=1             | grep -A1 "name: HYPERLIQUID_PERP_DEXS" | grep -q 'value: "xyz"'
 
       - name: Testnet by default
         run: |

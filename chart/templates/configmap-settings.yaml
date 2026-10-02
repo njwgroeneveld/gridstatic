@@ -1,3 +1,10 @@
+{{- $active := 0 }}
+{{- range $key, $c := .Values.grid.coins }}
+{{- if $c.active }}{{ $active = add1 $active }}{{ end }}
+{{- end }}
+{{- if eq $active 0 }}
+{{- fail "grid.coins has no active grid. Add one to your values file -- chart/values.yaml has a commented example. The chart has no default grid on purpose: Helm merges maps, so a default would quietly run next to yours." }}
+{{- end }}
 {{- range $key, $c := .Values.grid.coins }}
 {{- if $c.shadow }}
 {{- fail (printf "grid %s has shadow: true, but shadow mode was removed in chart 0.4.0. Installing would place real orders for a grid you believe is simulated. Test on testnet instead (hyperliquid.testnet: true) and remove `shadow` from the grid." $key) }}
@@ -18,7 +25,7 @@ data:
     coins:
     {{- range $key, $c := .Values.grid.coins }}
       {{ $key }}:
-        coin: {{ $c.coin }}
+        coin: {{ $c.coin | quote }}
         active: {{ $c.active }}
         allocation_pct: {{ $c.allocationPct }}
         upper: {{ $c.upper }}

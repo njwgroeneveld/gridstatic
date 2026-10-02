@@ -21,6 +21,16 @@ spec:
           env:
             - name: HYPERLIQUID_TESTNET
               value: {{ .Values.hyperliquid.testnet | quote }}
+            # HIP-3 dexes the grids trade on, from coins named "dex:NAME" such as
+            # xyz:XYZ100. The SDK needs them to turn those names into asset ids.
+            {{- $dexes := list }}
+            {{- range $key, $c := .Values.grid.coins }}
+            {{- if contains ":" (toString $c.coin) }}
+            {{- $dexes = append $dexes (first (splitList ":" (toString $c.coin))) }}
+            {{- end }}
+            {{- end }}
+            - name: HYPERLIQUID_PERP_DEXS
+              value: {{ $dexes | uniq | sortAlpha | join "," | quote }}
             - name: HL_PRIVATE_KEY
               valueFrom:
                 secretKeyRef: { name: {{ include "gridstatic.hyperliquidSecret" . }}, key: private_key }

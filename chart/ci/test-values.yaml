@@ -1,0 +1,14 @@
+# Values the chart workflow renders with -- not a starting point for a real
+# installation. .helmignore keeps ci/ out of the published chart.
+hyperliquid:
+  existingSecret: test-hl-secret
+grid:
+  coins:
+    BTC-20:
+      coin: BTC
+      active: true
+      allocationPct: 100
+      upper: 83000
+      lower: 75000
+      numLines: 20
+      leverage: 1

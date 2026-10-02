@@ -49,17 +49,29 @@ grid:
   # How far back the bot looks at fills to find coin a cell has bought but not
   # sold yet. Longer than any outage you expect the bot to sit out.
   fillLookbackHours: 72
-  # The key is a free-form label that shows up in logs and alerts. One grid per
-  # coin: the exchange keeps one position per coin per account.
-  coins:
-    BTC-20:
-      coin: BTC
-      active: true
-      allocationPct: 100
-      upper: 83000
-      lower: 75000
-      numLines: 20
-      leverage: 1
+  # Your grids. Deliberately empty: Helm merges maps, so a default grid here
+  # would quietly run next to the ones in your values file. The key is a
+  # free-form label for logs and alerts. One grid per coin: the exchange keeps
+  # one position per coin per account.
+  #
+  # coins:
+  #   BTC-20:
+  #     coin: BTC
+  #     active: true
+  #     allocationPct: 100
+  #     upper: 83000
+  #     lower: 75000
+  #     numLines: 20
+  #     leverage: 1
+  #   NDX-20:
+  #     coin: "xyz:XYZ100"      # HIP-3 market: "dex:NAME", quoted
+  #     active: true
+  #     allocationPct: 100
+  #     upper: 32000
+  #     lower: 29000
+  #     numLines: 20
+  #     leverage: 1
+  coins: {}
 
 scheduling:
   # Empty: the scheduler picks a node. The images are built for amd64 and arm64.
