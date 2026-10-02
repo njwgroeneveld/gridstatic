@@ -82,20 +82,29 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
     size_usd = calculate_size_usd(balance, cfg.get("strategy_allocation_pct", 100),
                                   c["allocation_pct"], c["num_lines"])
 
-    meta = info(url, {"type": "meta"})
-    sz_decimals = next(a["szDecimals"] for a in meta["universe"] if a["name"] == coin)
-    price = float(info(url, {"type": "allMids"})[coin])
-    orders = [o for o in info(url, {"type": "frontendOpenOrders", "user": address})
-              if o.get("coin") == coin]
-    state = info(url, {"type": "clearinghouseState", "user": address})
+    dex = coin.split(":", 1)[0] if ":" in coin else ""
+
+    def full(name: str) -> str:
+        return f"{dex}:{name}" if dex and ":" not in name else name
+
+    meta, ctxs = info(url, {"type": "metaAndAssetCtxs", "dex": dex})
+    i = next(n for n, a in enumerate(meta["universe"]) if a["name"] == coin)
+    sz_decimals = meta["universe"][i]["szDecimals"]
+    price = float(ctxs[i]["markPx"])          # what the bot decides from, not the mid
+    mid = ctxs[i].get("midPx")
+    orders = [o for o in info(url, {"type": "frontendOpenOrders", "user": address, "dex": dex})
+              if full(o.get("coin", "")) == coin]
+    state = info(url, {"type": "clearinghouseState", "user": address, "dex": dex})
     position = next((float(p["position"]["szi"]) for p in state.get("assetPositions", [])
-                     if p["position"]["coin"] == coin), 0.0)
+                     if full(p["position"]["coin"]) == coin), 0.0)
     since = int((time.time() - lookback_h * 3600) * 1000)
     fills = [f for f in info(url, {"type": "userFillsByTime", "user": address,
                                    "startTime": since})
              if f.get("coin") == coin]
-    print(INFO + f"price {price:g} | position {position:g} | {len(orders)} open orders | "
-                 f"{len(fills)} fills in {lookback_h:g}h")
+    print(INFO + f"mark {price:g} (mid {mid}) | position {position:g} | {len(orders)} open "
+                 f"orders | {len(fills)} fills in {lookback_h:g}h"
+                 + (f" | dex '{dex}' balance {float(state['marginSummary']['accountValue']):g}"
+                    if dex else ""))
 
     # ── invariants, checked on the raw data rather than through reconcile ──
     ours, earlier, foreign = [], [], []
@@ -116,7 +125,7 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
         if tag.side == SELL and not o.get("reduceOnly", False):
             bad(f"sell on cell {tag.cell} is not reduce-only")
         if tag.side == BUY and float(o["limitPx"]) >= price:
-            bad(f"buy on cell {tag.cell} at {o['limitPx']} is at or above the price")
+            bad(f"buy on cell {tag.cell} at {o['limitPx']} is at or above the mark price")
     doubles = {k: n for k, n in per_cell.items() if n > 1}
     if doubles:
         for (cell, side), n in sorted(doubles.items()):
