@@ -13,7 +13,7 @@ from dataclasses import asdict
 
 from src import metrics
 from src.alert_throttle import OutsideGridThrottle
-from src.cloid import BUY, SELL, decode, encode, fingerprint
+from src.cloid import BUY, SELL, STOP, decode, encode, fingerprint
 from src.grid_math import calculate_levels, calculate_size_usd
 from src.reconcile import Place, Plan, TaggedFill, plan
 
@@ -46,6 +46,8 @@ class StaticGrid:
         # something the exchange can tell once its fill history has rolled over.
         self.size_usd = calculate_size_usd(start_balance, strategy_allocation_pct,
                                            config["allocation_pct"], config["num_lines"])
+        # Optional. A reduce-only stop on the exchange at this price; see reconcile.
+        self.stop_loss = float(config["stop_loss"]) if config.get("stop_loss") else None
         self.connector = connector
         self.alerter = alerter
         self.interval = interval
@@ -69,6 +71,7 @@ class StaticGrid:
         self.last_price: float | None = None
         self.last_position: float | None = None
         self.realized_24h = 0.0
+        self._stopped_out = False     # announced once, cleared by the first buy after it
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)
@@ -180,9 +183,10 @@ class StaticGrid:
                  fills=[t for t, _ in tied], position=position, price=price,
                  size_usd=self.size_usd, leverage=self.leverage,
                  sz_decimals=self.sz_decimals, min_notional=MIN_NOTIONAL,
-                 forced_hold=self._vanished(orders, fills))
+                 forced_hold=self._vanished(orders, fills), stop_loss=self.stop_loss)
         placed, self._placed_oids = await self._execute(p)
         await self._report(p, tied, price)
+        await self._report_stop(position, price, placed)
 
         self.last_plan, self.last_price, self.last_position = p, price, position
         self._last_placed = placed
@@ -229,9 +233,13 @@ class StaticGrid:
             cloid = encode(self.fp, pl.cell, pl.side)
             t0 = time.time()
             try:
-                res = await self.connector.place_limit(
-                    self.coin, is_buy=pl.side == BUY, price=pl.price, sz=pl.sz,
-                    cloid=cloid, reduce_only=pl.reduce_only)
+                if pl.side == STOP:
+                    res = await self.connector.place_stop(
+                        self.coin, sz=pl.sz, trigger_px=pl.price, cloid=cloid)
+                else:
+                    res = await self.connector.place_limit(
+                        self.coin, is_buy=pl.side == BUY, price=pl.price, sz=pl.sz,
+                        cloid=cloid, reduce_only=pl.reduce_only)
             except Exception as e:
                 log.error(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} "
                           f"(cell {pl.cell}) failed: {e}")
@@ -274,6 +282,24 @@ class StaticGrid:
             sum(1 for c in p.cells if c.state == "buy"))
         metrics.grid_open_trades.labels(coin=self.coin).set(
             sum(1 for c in p.cells if c.state in ("sell", "unsold")))
+
+    async def _report_stop(self, position: float, price: float, placed: list[Place]) -> None:
+        """Being stopped out, and resuming. Flat below the grid after holding coin
+        means the stop went off; a close by hand inside the grid is not a stop.
+        The grid resumes on its own -- this only says so."""
+        held = (self.last_position or 0.0) > 0
+        flat = abs(position) <= 10 ** -(self.sz_decimals or 0) / 2
+        if (self.stop_loss is not None and held and flat and price < self.levels[0]
+                and not self._stopped_out):
+            self._stopped_out = True
+            log.warning(f"[{self.coin_key}] stopped out near {self.stop_loss}")
+            await self.alerter.send_alert("stopped_out", {
+                **self._label(), "stop_loss": self.stop_loss, "price": price,
+                "lower": self.levels[0]})
+        elif self._stopped_out and any(pl.side == BUY for pl in placed):
+            self._stopped_out = False
+            log.info(f"[{self.coin_key}] resumed: price {price} is back inside the grid")
+            await self.alerter.send_alert("grid_resumed", {**self._label(), "price": price})
 
     async def _notice(self, msg: str, key: str | None = None) -> None:
         """An error alert, at most once an hour per kind."""
@@ -363,6 +389,8 @@ class StaticGrid:
             except Exception as e:
                 log.error(f"[{self.coin_key}] start failed, retrying: {e}")
                 metrics.grid_errors_total.labels(type="start").inc()
+                await self._notice(f"{self.coin_key} cannot start and keeps retrying: {e}",
+                                   key="start")
                 await asyncio.sleep(self.interval)
         while True:
             try:
@@ -382,6 +410,7 @@ class StaticGrid:
             "num_lines": self.config["num_lines"],
             "leverage": self._label()["leverage"],
             "size_usd": self.size_usd,
+            "stop_loss": self.stop_loss,
             "price": self.last_price,
             "position": self.last_position,
             "hold": self._hold,
@@ -399,6 +428,8 @@ class StaticGrid:
             return []
         cells = {c.cell: asdict(c) for c in self.last_plan.cells}
         for pl in self._last_placed:
+            if pl.side == STOP:
+                continue    # the stop belongs to the grid, not to a cell
             c = cells[pl.cell]
             if pl.side == BUY:
                 c.update(state="buy" if c["state"] == "empty" else c["state"], buy_sz=pl.sz)

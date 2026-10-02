@@ -59,6 +59,13 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict, float]], list[str]]:
                           f"the exchange keeps one position per coin per account, and two "
                           f"grids cannot tell theirs apart.")
         owner_of.setdefault(coin, key)
+        stop = c.get("stop_loss")
+        if stop is not None:
+            if (not isinstance(stop, (int, float)) or isinstance(stop, bool)
+                    or not 0 < stop < c["lower"]):
+                errors.append(f"{key}: stop_loss {stop!r} must be a price between 0 and the "
+                              f"grid's lower bound {c['lower']}. Above it, the stop would close "
+                              f"positions the grid is meant to hold.")
         balance = c.get("start_balance", default_balance)
         if balance is None:
             errors.append(f"{key}: no start_balance. It sizes every order of a live grid; "

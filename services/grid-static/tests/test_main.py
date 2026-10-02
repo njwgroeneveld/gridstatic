@@ -177,3 +177,14 @@ def test_status_route_reports_every_grid(monkeypatch):
     r = client.get("/status")
     assert r.status_code == 200
     assert r.json() == {"grids": [{"coin": "BTC", "hold": None, "cells": []}]}
+
+
+@pytest.mark.parametrize("stop", [75000, 76000, 0, -5, "low"])
+def test_a_stop_loss_not_below_the_grid_refuses_to_start(stop):
+    with pytest.raises(m.ConfigError, match="stop_loss"):
+        m._validate(_cfg({"BTC-20": _grid(stop_loss=stop)}))
+
+
+def test_a_stop_loss_below_the_grid_is_accepted():
+    grids, _ = m._validate(_cfg({"BTC-20": _grid(stop_loss=72000)}))
+    assert grids[0][1]["stop_loss"] == 72000

@@ -39,6 +39,11 @@ def connector():
         return {"status": "ok", "oid": next(oids), "cloid": cloid, "sz": sz, "px": price}
 
     m.place_limit.side_effect = place
+
+    async def place_stop(coin, sz, trigger_px, cloid):
+        return {"status": "ok", "oid": next(oids), "cloid": cloid, "sz": sz, "px": trigger_px}
+
+    m.place_stop.side_effect = place_stop
     return m
 
 

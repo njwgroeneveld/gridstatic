@@ -5,10 +5,12 @@ what can go wrong around it -- an exchange that cannot be read, a cancel that
 fails, a fill that cannot be tied to a cell -- and about what gets reported.
 """
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock
 
-from src.cloid import BUY, SELL, decode, encode
+from src.cloid import BUY, SELL, STOP, decode, encode
 from tests.conftest import START_MS
 
 
@@ -355,3 +357,79 @@ async def test_the_margin_check_reads_the_balance_of_the_coin_s_dex(config, conn
 async def test_the_margin_check_on_the_default_dex(grid, connector):
     await grid.start()
     connector.get_account_value.assert_awaited_once_with(dex="")
+
+
+# ── stop-loss ──────────────────────────────────────────────────────────────────
+
+def _stop_grid(config, connector, alerter, clock, stop_loss=96.0):
+    from src.strategy import StaticGrid
+    config["stop_loss"] = stop_loss
+    return StaticGrid("BTC-11", config, strategy_allocation_pct=100, start_balance=550,
+                      connector=connector, alerter=alerter, clock=clock)
+
+
+async def test_the_stop_goes_out_through_the_stop_route(config, connector, alerter, clock):
+    g = _stop_grid(config, connector, alerter, clock)
+    await g.start()
+    cloid3 = encode(g.fp, 3, BUY)
+    connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
+    connector.get_open_orders.return_value = _resting_buys(g, 0, 1, 2, 4, 5)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
+    await g.run_round()
+    kw = connector.place_stop.call_args.kwargs
+    assert (kw["sz"], kw["trigger_px"]) == (0.38, 96.0)
+    assert decode(kw["cloid"]).side == STOP
+    assert all(decode(c.kwargs["cloid"]).side != STOP for c in connector.place_limit.call_args_list)
+    # the stop is not a cell: cell 0 still shows its buy
+    assert g.status()["cells"][0]["state"] == "buy"
+    assert g.status()["stop_loss"] == 96.0
+
+
+async def test_being_stopped_out_and_resuming_are_announced(config, connector, alerter, clock):
+    g = _stop_grid(config, connector, alerter, clock)
+    await g.start()
+    connector.get_open_orders.return_value = _resting_buys(g, 0, 1, 2, 3, 4)
+    connector.get_positions.return_value = {"BTC": {"szi": 0.42, "entry_px": 120.0}}
+    connector.get_price.return_value = 115.0
+    await g.run_round()                                  # holding coin (on hold, no fills)
+    connector.get_open_orders.return_value = []
+    connector.get_positions.return_value = {}
+    connector.get_price.return_value = 94.0              # the stop went off
+    await g.run_round()
+    assert "stopped_out" in _alert_types(alerter)
+    connector.place_limit.reset_mock()
+    await g.run_round()                                  # still below the grid: nothing
+    connector.place_limit.assert_not_called()
+    connector.get_price.return_value = 125.0             # back inside
+    await g.run_round()
+    assert connector.place_limit.await_count > 0
+    assert _alert_types(alerter).count("grid_resumed") == 1
+
+
+async def test_a_manual_close_inside_the_grid_is_not_a_stop(config, connector, alerter, clock):
+    g = _stop_grid(config, connector, alerter, clock)
+    await g.start()
+    connector.get_positions.return_value = {"BTC": {"szi": 0.42, "entry_px": 120.0}}
+    await g.run_round()
+    connector.get_positions.return_value = {}
+    await g.run_round()                                  # flat at 155: not below the grid
+    assert "stopped_out" not in _alert_types(alerter)
+
+
+async def test_a_refused_start_is_alerted_and_retried(grid, connector, alerter, monkeypatch):
+    import src.strategy as s
+    connector.set_leverage.side_effect = [RuntimeError("Invalid leverage value"), None]
+    sleeps = []
+
+    async def fake_sleep(d):
+        sleeps.append(d)
+        if len(sleeps) > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(s.asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await grid.run_loop()
+    msgs = [c.args[1]["message"] for c in alerter.send_alert.call_args_list if c.args[0] == "error"]
+    assert any("Invalid leverage" in m for m in msgs)
+    assert connector.set_leverage.await_count == 2      # it tried again

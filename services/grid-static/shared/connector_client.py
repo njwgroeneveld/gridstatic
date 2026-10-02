@@ -52,6 +52,14 @@ class ConnectorClient:
             r.raise_for_status()
             return r.json()
 
+    async def place_stop(self, coin: str, sz: float, trigger_px: float, cloid: str) -> dict:
+        """A reduce-only stop-market sell that lives on the exchange."""
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{self._url}/orders/stop", headers=_HEADERS, timeout=15,
+                             json={"coin": coin, "sz": sz, "trigger_px": trigger_px, "cloid": cloid})
+            r.raise_for_status()
+            return r.json()
+
     async def cancel_order(self, coin: str, oid: int) -> dict:
         async with httpx.AsyncClient() as c:
             r = await c.delete(f"{self._url}/orders/{coin}/{oid}",
