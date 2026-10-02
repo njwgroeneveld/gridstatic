@@ -22,7 +22,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "grid-static"))
-from src.cloid import BUY, SELL, decode, fingerprint  # noqa: E402
+from src.cloid import BUY, SELL, STOP, decode, fingerprint  # noqa: E402
 from src.grid_math import calculate_levels, calculate_size_usd  # noqa: E402
 from src.reconcile import TaggedFill, plan  # noqa: E402
 
@@ -122,8 +122,8 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
     per_cell: dict[tuple[int, str], int] = {}
     for o, tag in ours:
         per_cell[(tag.cell, tag.side)] = per_cell.get((tag.cell, tag.side), 0) + 1
-        if tag.side == SELL and not o.get("reduceOnly", False):
-            bad(f"sell on cell {tag.cell} is not reduce-only")
+        if tag.side in (SELL, STOP) and not o.get("reduceOnly", False):
+            bad(f"{tag.side.lower()} on cell {tag.cell} is not reduce-only")
         if tag.side == BUY and float(o["limitPx"]) >= price:
             bad(f"buy on cell {tag.cell} at {o['limitPx']} is at or above the mark price")
     doubles = {k: n for k, n in per_cell.items() if n > 1}
@@ -148,7 +148,8 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
             tied.append(TaggedFill(tag.cell, tag.side, float(f["sz"]), int(f["time"])))
 
     p = plan(levels=levels, fp=fp, orders=orders, fills=tied, position=position, price=price,
-             size_usd=size_usd, leverage=leverage, sz_decimals=sz_decimals, min_notional=10.0)
+             size_usd=size_usd, leverage=leverage, sz_decimals=sz_decimals, min_notional=10.0,
+             stop_loss=c.get("stop_loss"))
     if p.hold:
         bad(f"on hold: {p.hold}")
     else:

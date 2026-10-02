@@ -119,3 +119,21 @@ def test_status_of_a_grid_that_has_not_run_a_round():
 
 def test_status_without_grids():
     assert "No active grids" in format_grid_status([])
+
+
+def test_stopped_out_says_it_resumes_by_itself():
+    msg = format_alert("stopped_out", "grid-static",
+                       {"coin": "BTC", "num_lines": 10, "stop_loss": 80000, "price": 79500, "lower": 82000})
+    assert "Stopped out" in msg and "80,000" in msg and "82,000" in msg
+
+
+def test_grid_resumed():
+    msg = format_alert("grid_resumed", "grid-static", {"coin": "BTC", "num_lines": 10, "price": 82500})
+    assert "Back in the grid" in msg and "82,500" in msg
+
+
+def test_status_shows_the_stop_loss():
+    with_stop = format_grid_status([_grid(stop_loss=90.0)]).splitlines()
+    without = format_grid_status([_grid(stop_loss=None)]).splitlines()
+    assert any("per line | stop $90" in line for line in with_stop)
+    assert not any("stop $" in line for line in without)

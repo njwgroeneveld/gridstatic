@@ -63,6 +63,7 @@ grid:
   #     lower: 75000
   #     numLines: 20
   #     leverage: 1
+  #     stopLoss: 72000          # optional: stop below the grid, resumes on its own
   #   NDX-20:
   #     coin: "xyz:XYZ100"      # HIP-3 market: "dex:NAME", quoted
   #     active: true

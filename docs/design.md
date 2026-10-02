@@ -180,6 +180,28 @@ safe, but it does not trade. The first testnet run checks this.
 The top line has no line above it for the sell. And a buy within a tenth of a spacing below the
 price would sit on top of the market.
 
+### The stop-loss lives on the exchange, and the grid resumes on its own
+
+The optional stop-loss is a reduce-only stop-market order on the exchange, not a price check in
+the bot: it has to fire when the bot or the cluster is down, which on a home cluster with wifi
+nodes is when it matters. `reconcile` keeps exactly one, the size of the whole position, and
+replaces it when the position grows or the setting moves. It keeps it while the grid holds.
+
+Whether a triggered order keeps its order id and cloid is not documented, so recovery does not
+depend on recognising the stop's fill. It rests on a simpler rule: **a flat position means no cell
+holds coin.** Stale sells are cancelled and the fill history is ignored. That covers a stop, a
+close by hand, and a stop that fills in pieces (the rest gets a new stop, which fires at once).
+
+Resuming needs no state either. After a stop the price is below `stopLoss`, which is below
+`lower`, so every line is above the price and no buy goes out. When the price comes back inside,
+the lines below it get their buys again.
+
+### Leverage fails loudly
+
+The SDK answers a refused leverage with `status: err` instead of raising. The connector used to
+log it and answer ok, so the bot sized orders for a leverage that was never set. Now a refusal
+stops that grid from starting, with an alert, and it keeps retrying.
+
 ### One grid per coin
 
 The exchange keeps one net position per coin per account. Two grids on one coin share it and can

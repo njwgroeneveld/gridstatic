@@ -24,6 +24,7 @@ it reads the exchange and repairs the difference with the grid you configured.
 - [Manual installation](#manual-installation)
 - [Configuration](#configuration)
 - [Stocks and indices: HIP-3 markets](#stocks-and-indices-hip-3-markets)
+- [Stop-loss (optional)](#stop-loss-optional)
 - [When the grid holds](#when-the-grid-holds)
 - [Going to mainnet](#going-to-mainnet)
 - [Checking a running grid](#checking-a-running-grid)
@@ -371,6 +372,32 @@ from a regular market:
 
 ---
 
+## Stop-loss (optional)
+
+A grid without a stop-loss holds every position it bought on the way down for as long as the
+price stays below the range. With one, it sells everything when the price falls through it:
+
+```yaml
+    BTC-10:
+      coin: BTC
+      lower: 82000
+      upper: 91000
+      stopLoss: 80000              # optional; must lie below lower
+```
+
+- **It lives on the exchange.** A reduce-only stop-market order, always the size of the whole
+  position, kept up to date every round. It fires even when the bot or your cluster is down.
+- **It stays while the grid holds.** A hold stops new buys; it never takes the protection away.
+- **The grid resumes on its own.** After a stop the price is below the grid, so no line gets a buy.
+  Once the price is back inside, the lines below it get their buys again. You get a
+  `stopped_out` alert, and a `grid_resumed` alert when it starts buying again.
+- **Slippage is capped at 10%** below the stop price. On a thin book a bad fill beats none.
+
+The price can come back, fall through again and stop you out twice. A stop well below `lower`
+makes that less likely and costs more when it does fire. Leave `stopLoss` out for no stop at all.
+
+---
+
 ## When the grid holds
 
 On hold, the bot places **no new buys**. It still places sells for coin it can account for, and
@@ -540,7 +567,7 @@ install.sh                   one-command installer
 docs/design.md               design decisions and the incidents behind them
 ```
 
-Run the tests (178 in total):
+Run the tests (213 in total):
 
 ```bash
 for s in grid-static connector telegram-alerter; do

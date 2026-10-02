@@ -51,6 +51,18 @@ def format_alert(alert_type: str, bot: str, payload: dict) -> str:
                 f"{reason}\n"
                 f"Sells still go out. The grid resumes by itself once the position adds up.")
 
+    if alert_type == "stopped_out":
+        label = _grid_label(payload)
+        return (f"🛑 <b>[{label}] Stopped out</b>\n"
+                f"Stop-loss ${payload.get('stop_loss', 0):,.2f} | price now "
+                f"${payload.get('price', 0):,.2f}\n"
+                f"Position closed. The grid buys again by itself once the price is back above "
+                f"${payload.get('lower', 0):,.2f}.")
+
+    if alert_type == "grid_resumed":
+        return (f"▶️ <b>[{_grid_label(payload)}] Back in the grid</b> — buying again at "
+                f"${payload.get('price', 0):,.2f}")
+
     if alert_type == "hold_cleared":
         return f"▶️ <b>[{_grid_label(payload)}] Hold cleared</b> — buying again"
 
@@ -102,7 +114,8 @@ def format_grid_status(grids: list[dict]) -> str:
         lev = g.get("leverage", 1)
         lev_tag = f" {lev}x" if lev and lev > 1 else ""
         lines.append(f"\n<b>── {g['coin']} {g['num_lines']}L{lev_tag} ──</b>")
-        lines.append(f"${g['lower']:,.0f} ↔ ${g['upper']:,.0f} | ${g['size_usd']:,.2f} per line")
+        stop = f" | stop ${g['stop_loss']:,.0f}" if g.get("stop_loss") else ""
+        lines.append(f"${g['lower']:,.0f} ↔ ${g['upper']:,.0f} | ${g['size_usd']:,.2f} per line{stop}")
 
         if not g.get("cells"):
             lines.append("No round yet — the grid is starting up.")
