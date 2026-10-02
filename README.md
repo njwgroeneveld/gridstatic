@@ -144,9 +144,11 @@ The script asks for your testnet key (hidden input) and an optional subaccount, 
 1. checks that `kubectl`, `helm` and your cluster are available
 2. creates the `gridstatic` namespace
 3. stores the key in a Kubernetes Secret
-4. writes `gridstatic-values.yaml` with a default BTC grid on testnet
-5. installs the Helm chart
-6. **verifies the result**: all pods run, the bot started its grid, and its first rounds run
+4. offers to set up [Telegram alerts](#telegram-alerts-optional): checks your bot token, looks
+   up your chat id and sends a test message
+5. writes `gridstatic-values.yaml` with a BTC grid on testnet
+6. installs the Helm chart
+7. **verifies the result**: all pods run, the bot started its grid, and its first rounds run
    without errors — or tells you it is on hold, and why
 
 You end with a single verdict: done, or what went wrong and where to look.
@@ -160,9 +162,11 @@ You end with a single verdict: done, or what went wrong and where to look.
 | `--dry-run` | show every step without touching anything |
 | `--namespace`, `--release`, `--chart` | override the defaults |
 | `GRIDSTATIC_HL_KEY`, `GRIDSTATIC_HL_WALLET` | skip the questions (useful in automation) |
+| `GRIDSTATIC_TG_TOKEN`, `GRIDSTATIC_TG_CHAT` | include Telegram without asking; the chat id is looked up when empty |
 
-The key deliberately has no command-line flag: it would end up in your shell history. Re-running
-the script is safe; it reuses the Secret and upgrades the release.
+The key and the bot token deliberately have no command-line flag: they would end up in your shell
+history. Re-running the script is safe; it reuses the Secrets and upgrades the release, and adds
+Telegram to an existing values file if you set it up later.
 
 ---
 
@@ -442,6 +446,12 @@ It needs `kubectl` access to the namespace (or `--settings settings.yaml`) and P
 Create a bot with [@BotFather](https://t.me/BotFather). **Use a token that no other application
 listens on** — Telegram allows only one listener per token, and two would take updates away
 from each other.
+
+**The easy way:** run `bash install.sh` again and answer yes to the Telegram question. It checks
+the token, looks up your chat id once you have sent the bot a message, sends a test message,
+creates the Secret and turns the alerter on — without the token ever showing on screen.
+
+**By hand:**
 
 ```bash
 read -rsp 'Bot token: ' TG_TOKEN; echo

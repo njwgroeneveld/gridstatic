@@ -31,6 +31,21 @@ jobs:
             exit 1
           fi
 
+      - name: No bot token in the dry-run output
+        env:
+          GRIDSTATIC_HL_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
+          GRIDSTATIC_TG_TOKEN: "123456:VERYSECRETbottokenXYZ"
+        run: |
+          if bash install.sh --dry-run 2>&1 | grep -q VERYSECRET; then
+            echo "ERROR: the dry run prints the Telegram bot token"
+            exit 1
+          fi
+
+      - name: Without a terminal, the Telegram question is skipped, not awaited
+        env:
+          GRIDSTATIC_HL_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
+        run: bash install.sh --dry-run < /dev/null | grep -q "skipped (no terminal"
+
       - name: install.sh refuses something that is not a key
         env:
           GRIDSTATIC_HL_KEY: "not-a-key"

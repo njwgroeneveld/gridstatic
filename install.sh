@@ -5,9 +5,10 @@
 #   curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/install.sh
 #   bash install.sh
 #
-# One question: your Hyperliquid testnet key. Everything else has a default, and
-# every order goes to testnet -- nothing here costs real money. Moving to mainnet
-# is a manual step described in the README, deliberately not a script.
+# One question: your Hyperliquid testnet key -- plus, if you like, a Telegram bot
+# for alerts. Everything else has a default, and every order goes to testnet --
+# nothing here costs real money. Moving to mainnet is a manual step described in
+# the README, deliberately not a script.
 
 set -euo pipefail
 
@@ -16,6 +17,7 @@ RELEASE="${GRIDSTATIC_RELEASE:-gridstatic}"
 CHART="${GRIDSTATIC_CHART:-oci://ghcr.io/njwgroeneveld/charts/gridstatic}"
 VALUES_FILE="gridstatic-values.yaml"
 HL_SECRET="gridstatic-hyperliquid"
+TG_SECRET="gridstatic-telegram"
 DRY_RUN=0
 
 red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; bold=$'\033[1m'; reset=$'\033[0m'
@@ -53,12 +55,14 @@ Options
 Environment variables (each one skips the matching question)
   GRIDSTATIC_HL_KEY      private key of the testnet account (0x + 64 hex)
   GRIDSTATIC_HL_WALLET   subaccount to trade on; empty = the key's own account
+  GRIDSTATIC_TG_TOKEN    Telegram bot token; set it to include alerts
+  GRIDSTATIC_TG_CHAT     Telegram chat id; looked up for you when empty
   GRIDSTATIC_NAMESPACE   same as --namespace
   GRIDSTATIC_RELEASE     same as --release
   GRIDSTATIC_CHART       same as --chart
 
-The key deliberately has no command-line option: it would end up in your shell
-history and be visible in ps.
+The key and the bot token deliberately have no command-line option: they would end
+up in your shell history and be visible in ps.
 EOF
 }
 
@@ -198,11 +202,101 @@ else
   if [ "$DRY_RUN" = 0 ]; then ok "created or updated"; fi
 fi
 
-# ── 5. Values file ───────────────────────────────────────────────────────────
+# ── 5. Telegram (optional) ───────────────────────────────────────────────────
+step "Telegram alerts (optional)"
+
+TG_TOKEN="${GRIDSTATIC_TG_TOKEN:-}"
+TG_CHAT="${GRIDSTATIC_TG_CHAT:-}"
+TG_ENABLED=0
+TG_REUSE=0
+
+# The URL carries the token, so curl reads it from stdin: a here-string is a shell
+# builtin, and the token never becomes an argument that shows up in ps.
+tg_api() { curl -fsS --max-time 20 --config - <<<"url = \"https://api.telegram.org/bot${TG_TOKEN}/$1\""; }
+
+if [ -n "$TG_TOKEN" ]; then
+  TG_ENABLED=1
+elif [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 \
+     && kubectl -n "$NAMESPACE" get secret "$TG_SECRET" >/dev/null 2>&1; then
+  ok "Secret $TG_SECRET already exists -- alerts stay on"
+  TG_ENABLED=1
+  TG_REUSE=1
+elif [ -t 0 ]; then
+  cat <<'EOF'
+  Alerts when a buy fills, a cycle closes, a grid holds or the price leaves its
+  range -- plus a /status command. It needs a Telegram bot of its own: create one
+  with @BotFather (/newbot). Do not reuse the token of a bot that something else
+  already listens on: Telegram allows one listener per token.
+
+EOF
+  printf '  Set up Telegram alerts? [y/N]: '
+  read -r answer
+  case "$answer" in
+    y|Y|yes|j|J)
+      printf '  Bot token (input stays hidden): '
+      read -rs TG_TOKEN
+      printf '\n'
+      TG_ENABLED=1
+      ;;
+    *) ok "skipped -- 'Telegram alerts' in the README adds it later" ;;
+  esac
+else
+  # No terminal (CI, a pipe): never wait for an answer that cannot come.
+  ok "skipped (no terminal; set GRIDSTATIC_TG_TOKEN to include it)"
+fi
+
+if [ "$TG_ENABLED" = 1 ] && [ "$TG_REUSE" = 0 ]; then
+  [ -n "$TG_TOKEN" ] || die "no bot token given"
+  if [ "$DRY_RUN" = 1 ]; then
+    say "       would check the token with Telegram and look up your chat id"
+    printf '       would run: kubectl apply -f - (Secret %s/%s, bot_token=<hidden>)\n' \
+      "$NAMESPACE" "$TG_SECRET"
+  else
+    me="$(tg_api getMe 2>/dev/null)" || die "Telegram does not accept this token -- copy it again from @BotFather"
+    bot="$(printf '%s' "$me" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')"
+    ok "token works: @$bot"
+    if [ -z "$TG_CHAT" ]; then
+      [ -t 0 ] || die "no terminal to look up the chat id -- set GRIDSTATIC_TG_CHAT"
+      say "  Send any message to @$bot in Telegram, then press Enter."
+      read -r _
+      TG_CHAT="$(tg_api getUpdates | grep -oE '"chat":\{"id":-?[0-9]+' | head -1 | grep -oE -- '-?[0-9]+$' || true)"
+      if [ -z "$TG_CHAT" ]; then
+        printf '  No message found. Chat id to send alerts to: '
+        read -r TG_CHAT
+      fi
+    fi
+    printf '%s' "$TG_CHAT" | grep -qE '^-?[0-9]+$' \
+      || die "that is not a chat id (a number; a group's starts with -)"
+    tg_api "sendMessage?chat_id=${TG_CHAT}&text=gridstatic%20is%20connected%20--%20alerts%20will%20arrive%20here." >/dev/null \
+      || die "could not send to chat $TG_CHAT -- write to @$bot from that chat first"
+    ok "test message sent to chat $TG_CHAT"
+    printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  bot_token: %s\n  chat_id: %s\n' \
+      "$TG_SECRET" "$NAMESPACE" "$(printf '%s' "$TG_TOKEN" | base64 | tr -d '\n')" \
+      "$(printf '%s' "$TG_CHAT" | base64 | tr -d '\n')" | kubectl apply -f - >/dev/null
+    ok "Secret $TG_SECRET created or updated"
+  fi
+fi
+unset TG_TOKEN
+
+TG_VALUES=""
+if [ "$TG_ENABLED" = 1 ]; then
+  TG_VALUES=$'telegram:\n  enabled: true\n  existingSecret: '"$TG_SECRET"$'\n'
+fi
+
+# ── 6. Values file ───────────────────────────────────────────────────────────
 step "Values file $VALUES_FILE"
 
 if [ -f "$VALUES_FILE" ]; then
-  ok "already exists -- left unchanged"
+  if [ "$TG_ENABLED" = 1 ] && ! grep -q '^telegram:' "$VALUES_FILE"; then
+    if [ "$DRY_RUN" = 1 ]; then
+      printf '       would add the telegram block to %s\n' "$VALUES_FILE"
+    else
+      printf '\n%s' "$TG_VALUES" >> "$VALUES_FILE"
+      ok "already exists -- telegram block added"
+    fi
+  else
+    ok "already exists -- left unchanged"
+  fi
 else
   if [ "$DRY_RUN" = 1 ]; then
     printf '       would write: %s\n' "$VALUES_FILE"
@@ -216,6 +310,7 @@ hyperliquid:
   testnet: true
   existingSecret: $HL_SECRET
 
+${TG_VALUES}
 grid:
   # Fixed size per line: startBalance x 80% / lines. With 20 lines, 1000 means
   # \$40 per line. Hyperliquid refuses orders under \$10.
@@ -234,7 +329,7 @@ EOF
   fi
 fi
 
-# ── 6. Install ───────────────────────────────────────────────────────────────
+# ── 7. Install ───────────────────────────────────────────────────────────────
 step "Deploying the chart"
 
 if [ "$DRY_RUN" = 0 ] && helm status "$RELEASE" -n "$NAMESPACE" >/dev/null 2>&1; then
@@ -251,12 +346,14 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 ok "deployed"
 
-# ── 7. Verify ────────────────────────────────────────────────────────────────
+# ── 8. Verify ────────────────────────────────────────────────────────────────
 step "Checking that it works"
 
 say "  waiting for the pods to become ready..."
+deployments=(deployment/"$RELEASE"-connector deployment/"$RELEASE"-grid-static)
+if [ "$TG_ENABLED" = 1 ]; then deployments+=(deployment/"$RELEASE"-alerter); fi
 if ! kubectl -n "$NAMESPACE" wait --for=condition=available --timeout=180s \
-     deployment/"$RELEASE"-connector deployment/"$RELEASE"-grid-static >/dev/null 2>&1; then
+     "${deployments[@]}" >/dev/null 2>&1; then
   warn "not every pod was ready within three minutes"
 fi
 
@@ -333,7 +430,8 @@ if [ "$problems" = 0 ]; then
 
   See every cell:
     kubectl -n $NAMESPACE port-forward svc/$RELEASE-grid-static 8080:8080
-    curl -s localhost:8080/status
+    curl -s localhost:8080/status$( [ "$TG_ENABLED" = 1 ] && printf '
+    or send /status to your Telegram bot' )
 
   Change your grids: edit $VALUES_FILE, then run
     helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
