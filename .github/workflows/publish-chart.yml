@@ -5,7 +5,6 @@ on:
     branches: [master]
     paths:
       - 'chart/**'
-      - 'db/schema.sql'
       - '.github/workflows/publish-chart.yml'
   workflow_dispatch:
 
@@ -15,43 +14,53 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      KEY: --set hyperliquid.existingSecret=test-hl-secret
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
 
-      - name: Schema in the chart matches the source
-        run: diff db/schema.sql chart/files/schema.sql
-
       - name: Lint
-        run: helm lint ./chart --set database.existingSecret=test-db-secret
+        run: helm lint ./chart $KEY
 
       - name: Render
-        run: helm template t ./chart --set database.existingSecret=test-db-secret > /dev/null
+        run: helm template t ./chart $KEY > /dev/null
 
-      - name: Refuse to render without database.existingSecret
+      - name: Refuse to render without hyperliquid.existingSecret
         run: |
-          if helm template t ./chart > /dev/null 2>&1; then
-            echo "ERROR: the chart renders without database.existingSecret"
+          # Check the reason too: a template that breaks for some other reason
+          # would pass a bare "does it fail" check.
+          if out=$(helm template t ./chart 2>&1); then
+            echo "ERROR: the chart renders without hyperliquid.existingSecret"
             exit 1
           fi
+          echo "$out" | grep -q "hyperliquid.existingSecret is empty"
 
-      - name: The schema is in the rendered ConfigMap
+      - name: Testnet by default
         run: |
-          helm template t ./chart --set database.existingSecret=test-db-secret \
-            | grep -q "CREATE UNIQUE INDEX IF NOT EXISTS grid_orders_one_open_buy_per_level"
+          helm template t ./chart $KEY \
+            | grep -A1 "name: HYPERLIQUID_TESTNET" | grep -q 'value: "true"'
 
-      - name: Everything runs in shadow by default
+      - name: Refuse a grid that still says shadow true
         run: |
-          # Comment lines in the templates mention "shadow: false" to explain what it
-          # does. Only real settings count, so strip comments first.
-          if helm template t ./chart --set database.existingSecret=test-db-secret | grep -v '^[[:space:]]*#' | grep -q "shadow: false"; then
-            echo "ERROR: the default values put a grid on shadow: false"
+          # Shadow mode is gone. Rendering it would place real orders for a grid
+          # someone believes is simulated.
+          if out=$(helm template t ./chart $KEY --set grid.coins.BTC-20.shadow=true 2>&1); then
+            echo "ERROR: the chart renders a grid with shadow: true"
+            exit 1
+          fi
+          echo "$out" | grep -q "shadow mode was removed"
+
+      - name: No database left
+        run: |
+          if helm template t ./chart $KEY | grep -qiE -- "-dal\b|DATABASE_URL|dal_url"; then
+            echo "ERROR: the rendered chart still refers to the dal or a database"
             exit 1
           fi
 
       - name: The chart creates no Secrets of its own
         run: |
-          if helm template t ./chart --set database.existingSecret=test-db-secret | grep -q "^kind: Secret"; then
+          if helm template t ./chart $KEY | grep -q "^kind: Secret"; then
             echo "ERROR: the chart renders a Secret; secrets must not pass through Helm"
             exit 1
           fi

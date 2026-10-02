@@ -19,14 +19,23 @@ jobs:
 
       - name: install.sh dry run touches nothing
         env:
-          GRIDSTATIC_DB_URL: postgresql://postgres.test:secret@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
+          GRIDSTATIC_HL_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
         run: bash install.sh --dry-run
 
-      - name: No secret in the dry-run output
+      - name: No key in the dry-run output
         env:
-          GRIDSTATIC_DB_URL: postgresql://postgres.test:verysecretpassword@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
+          GRIDSTATIC_HL_KEY: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef1234"
         run: |
-          if bash install.sh --dry-run | grep -q verysecretpassword; then
-            echo "ERROR: the dry run prints the password"
+          if bash install.sh --dry-run 2>&1 | grep -qi abcdefabcdef; then
+            echo "ERROR: the dry run prints the private key"
+            exit 1
+          fi
+
+      - name: install.sh refuses something that is not a key
+        env:
+          GRIDSTATIC_HL_KEY: "not-a-key"
+        run: |
+          if bash install.sh --dry-run > /dev/null 2>&1; then
+            echo "ERROR: install.sh accepted an invalid key"
             exit 1
           fi

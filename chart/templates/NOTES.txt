@@ -1,15 +1,16 @@
 gridstatic is installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
 
-The dal's initContainer applies the database schema. Check it first:
-  kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }}-dal -c schema
-
-Then follow the bot:
+Follow the bot:
   kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }}-grid-static -f
 
-If the dal keeps printing "waiting for the database...", the database is not reachable
-from the cluster. Check your connection string: use the session pooler (port 5432 on
-aws-0-<region>.pooler.supabase.com). The direct connection db.<ref>.supabase.co is
-IPv6-only and does not work from an IPv4 cluster.
-{{ range $key, $c := .Values.grid.coins }}{{ if not $c.shadow }}
-WARNING: grid {{ $key }} has shadow: false and trades with real money.
-{{- end }}{{ end }}
+What it sees right now, cell by cell:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-grid-static 8080:8080
+  curl -s localhost:8080/status
+
+If the log says "Refusing to start", the configuration has a problem the bot will not
+trade with; the message names it.
+{{ if .Values.hyperliquid.testnet }}
+Trading on Hyperliquid TESTNET. Nothing here costs real money.
+{{- else }}
+WARNING: hyperliquid.testnet is false. This stack trades with REAL MONEY on mainnet.
+{{- end }}

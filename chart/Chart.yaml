@@ -1,6 +1,6 @@
 apiVersion: v2
 name: gridstatic
-description: Grid trading bot for Hyperliquid -- four services, one chart
+description: Grid trading bot for Hyperliquid -- three services, one chart, no database
 type: application
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.4.0
+appVersion: "0.4.0"

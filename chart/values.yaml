@@ -2,9 +2,6 @@ images:
   gridStatic:
     repository: ghcr.io/njwgroeneveld/gridstatic-grid-static
     tag: latest
-  dal:
-    repository: ghcr.io/njwgroeneveld/gridstatic-dal
-    tag: latest
   connector:
     repository: ghcr.io/njwgroeneveld/gridstatic-connector
     tag: latest
@@ -21,28 +18,17 @@ images:
 #
 # See the README for the commands that create these Secrets.
 
-database:
-  # REQUIRED. Name of a Secret with the key `url`: the connection string to your
-  # own Supabase project or any other PostgreSQL.
-  #
-  # Which connection: in the Supabase dashboard under "Connect", take the SESSION
-  # POOLER (port 5432, host aws-0-<region>.pooler.supabase.com, user
-  # postgres.<project-ref>). The DIRECT connection (db.<project-ref>.supabase.co)
-  # is IPv6-only and does not work from an IPv4 cluster. The transaction pooler
-  # on port 6543 works too, but is meant for short-lived connections; the session
-  # pooler suits a long-running service. Add sslmode=require.
-  #
-  # WARNING: never point this at a database another gridstatic stack is already
-  # using. Its active grid_configs are there; this bot will recognise them as its
-  # own and manage the same grids. Two bots on one grid means duplicate orders.
-  existingSecret: ""
-
 hyperliquid:
+  # true: every order goes to Hyperliquid's testnet. Leave it on until the grid
+  # has run there to your satisfaction -- switching to mainnet means real money.
   testnet: true
-  # Optional. Name of a Secret with the keys `private_key` and `wallet_address`.
-  # Leaving it empty is fine: without a key the connector never builds an exchange
-  # client and its order routes answer 503. That is enough for shadow, which never
-  # places an order. A grid with shadow: false needs it.
+  # REQUIRED. Name of a Secret with the keys `private_key` and `wallet_address`.
+  # Use a testnet key while testnet is true. wallet_address is the subaccount to
+  # trade on; leave it empty to trade on the key's own account.
+  #
+  # Give this stack an account of its own. The bot checks every round that the
+  # position adds up to its own orders; a manual position or another bot on the
+  # same coin puts the grid on hold.
   existingSecret: ""
 
 telegram:
@@ -53,22 +39,22 @@ telegram:
 
 grid:
   strategyAllocationPct: 80
-  # Basis for order sizing -- live as well, not only in shadow. Set it to the
-  # amount you are willing to trust this stack with. With 20 lines and 80%
-  # allocation, 1000 means $40 per line.
+  # Basis for order sizing: every line gets startBalance x allocation / lines,
+  # fixed -- it does not grow with profit. With 20 lines and 80% allocation, 1000
+  # means $40 per line. Hyperliquid refuses orders under $10 (leverage counts),
+  # and the bot refuses to start with a grid that would place them.
   startBalance: 1000
-  fillsPollIntervalSeconds: 30
-  healthCheckIntervalSeconds: 60
-  # The key is a free-form label that only shows up in log lines. Behaviour comes
-  # from the fields below it.
+  # How often the bot reads the exchange and repairs the grid.
+  roundIntervalSeconds: 30
+  # How far back the bot looks at fills to find coin a cell has bought but not
+  # sold yet. Longer than any outage you expect the bot to sit out.
+  fillLookbackHours: 72
+  # The key is a free-form label that shows up in logs and alerts. One grid per
+  # coin: the exchange keeps one position per coin per account.
   coins:
     BTC-20:
       coin: BTC
       active: true
-      # shadow: false means trading with real money. Together with a filled-in
-      # hyperliquid.existingSecret these are the two steps to going live, kept
-      # deliberately separate.
-      shadow: true
       allocationPct: 100
       upper: 83000
       lower: 75000

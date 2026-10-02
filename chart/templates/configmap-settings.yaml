@@ -1,3 +1,8 @@
+{{- range $key, $c := .Values.grid.coins }}
+{{- if $c.shadow }}
+{{- fail (printf "grid %s has shadow: true, but shadow mode was removed in chart 0.4.0. Installing would place real orders for a grid you believe is simulated. Test on testnet instead (hyperliquid.testnet: true) and remove `shadow` from the grid." $key) }}
+{{- end }}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,7 +10,6 @@ metadata:
 data:
   settings.yaml: |
     connector_url: http://{{ .Release.Name }}-connector:8080
-    dal_url: http://{{ .Release.Name }}-dal:8080
     alerter_url: http://{{ .Release.Name }}-alerter:8080
 
     strategy_allocation_pct: {{ .Values.grid.strategyAllocationPct }}
@@ -16,7 +20,6 @@ data:
       {{ $key }}:
         coin: {{ $c.coin }}
         active: {{ $c.active }}
-        shadow: {{ $c.shadow }}
         allocation_pct: {{ $c.allocationPct }}
         upper: {{ $c.upper }}
         lower: {{ $c.lower }}
@@ -24,5 +27,5 @@ data:
         leverage: {{ $c.leverage }}
     {{- end }}
 
-    fills_poll_interval_seconds: {{ .Values.grid.fillsPollIntervalSeconds }}
-    health_check_interval_seconds: {{ .Values.grid.healthCheckIntervalSeconds }}
+    round_interval_seconds: {{ .Values.grid.roundIntervalSeconds }}
+    fill_lookback_hours: {{ .Values.grid.fillLookbackHours }}

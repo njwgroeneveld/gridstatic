@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# gridstatic -- install the stack in shadow mode.
+# gridstatic -- install the stack on Hyperliquid testnet.
 #
 #   curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/install.sh
 #   bash install.sh
 #
-# One question: your database connection. Everything else has a default, and every
-# grid runs in shadow -- a simulation that never sends an order to the exchange.
-# Going live is a manual step described in the README, deliberately not a script.
+# One question: your Hyperliquid testnet key. Everything else has a default, and
+# every order goes to testnet -- nothing here costs real money. Moving to mainnet
+# is a manual step described in the README, deliberately not a script.
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ NAMESPACE="${GRIDSTATIC_NAMESPACE:-gridstatic}"
 RELEASE="${GRIDSTATIC_RELEASE:-gridstatic}"
 CHART="${GRIDSTATIC_CHART:-oci://ghcr.io/njwgroeneveld/charts/gridstatic}"
 VALUES_FILE="gridstatic-values.yaml"
-DB_SECRET="gridstatic-db"
+HL_SECRET="gridstatic-hyperliquid"
 DRY_RUN=0
 
 red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; bold=$'\033[1m'; reset=$'\033[0m'
@@ -38,7 +38,7 @@ run() {
 
 usage() {
   cat <<'EOF'
-Install gridstatic (shadow mode)
+Install gridstatic (Hyperliquid testnet)
 
   bash install.sh [options]
 
@@ -51,13 +51,14 @@ Options
   --help             this text
 
 Environment variables (each one skips the matching question)
-  GRIDSTATIC_DB_URL      connection string for your PostgreSQL / Supabase
+  GRIDSTATIC_HL_KEY      private key of the testnet account (0x + 64 hex)
+  GRIDSTATIC_HL_WALLET   subaccount to trade on; empty = the key's own account
   GRIDSTATIC_NAMESPACE   same as --namespace
   GRIDSTATIC_RELEASE     same as --release
   GRIDSTATIC_CHART       same as --chart
 
-The database connection deliberately has no command-line option: it would end up
-in your shell history and be visible in ps.
+The key deliberately has no command-line option: it would end up in your shell
+history and be visible in ps.
 EOF
 }
 
@@ -106,18 +107,18 @@ else
   ok "cluster reachable ($(kubectl config current-context))"
 fi
 
-# ── 2. Database ──────────────────────────────────────────────────────────────
-step "Your database"
+# ── 2. Hyperliquid key ───────────────────────────────────────────────────────
+step "Your Hyperliquid testnet key"
 
-DB_URL="${GRIDSTATIC_DB_URL:-}"
+HL_KEY="${GRIDSTATIC_HL_KEY:-}"
+HL_WALLET="${GRIDSTATIC_HL_WALLET:-}"
 
 # Reinstalling is a normal case: helm uninstall only removes what Helm created, so
-# the Secret is usually still there. Then there is no need to look up the
-# connection string again.
+# the Secret is usually still there. Then there is no need to paste the key again.
 REUSE_SECRET=0
-if [ -z "$DB_URL" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 \
-   && kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null 2>&1; then
-  say "  A Secret $DB_SECRET already exists in namespace $NAMESPACE."
+if [ -z "$HL_KEY" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 \
+   && kubectl -n "$NAMESPACE" get secret "$HL_SECRET" >/dev/null 2>&1; then
+  say "  A Secret $HL_SECRET already exists in namespace $NAMESPACE."
   printf '  Use it? [Y/n]: '
   read -r answer
   case "$answer" in
@@ -127,36 +128,38 @@ if [ -z "$DB_URL" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 
 fi
 
 if [ "$REUSE_SECRET" = 1 ]; then
-  ok "reusing the existing Secret -- no connection string needed"
-elif [ -z "$DB_URL" ]; then
+  ok "reusing the existing Secret -- no key needed"
+elif [ -z "$HL_KEY" ]; then
   cat <<'EOF'
-  You need your own PostgreSQL; a free Supabase project is enough.
-  In the dashboard under "Connect", copy the SESSION POOLER string:
+  The bot trades on Hyperliquid TESTNET: test money, real exchange. Create a
+  testnet account at https://app.hyperliquid-testnet.xyz, claim test USDC from
+  its faucet, and export the account's private key.
 
-    postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
-
-  Not the direct connection (db.<ref>.supabase.co): it is IPv6-only and does not
-  work from an IPv4 cluster.
-
-  WARNING: do not use a database another gridstatic stack is already using. Two
-  bots on the same grid_configs place duplicate orders.
+  Give the bot an account of its own -- a fresh one, or a subaccount. Every round
+  it checks that the position adds up to its own orders; a manual position or
+  another bot on the same coin puts the grid on hold.
 
 EOF
-  printf '  Connection string (input stays hidden): '
-  read -rs DB_URL
+  printf '  Private key (input stays hidden): '
+  read -rs HL_KEY
   printf '\n'
+  printf '  Subaccount address to trade on (empty: the key'"'"'s own account): '
+  read -r HL_WALLET
 fi
 
 if [ "$REUSE_SECRET" = 0 ]; then
-  [ -n "$DB_URL" ] || die "no connection string given"
-  case "$DB_URL" in
-    postgresql://*|postgres://*) : ;;
-    *) die "that does not look like a connection string (expected postgresql://...)" ;;
+  [ -n "$HL_KEY" ] || die "no key given"
+  case "$HL_KEY" in
+    0x*) : ;;
+    *)   HL_KEY="0x$HL_KEY" ;;
   esac
-  case "$DB_URL" in
-    *:6543/*) warn "this is the transaction pooler (6543); the session pooler on 5432 suits a long-running service better" ;;
-  esac
-  ok "connection string received (${#DB_URL} characters)"
+  if ! printf '%s' "$HL_KEY" | grep -qE '^0x[0-9a-fA-F]{64}$'; then
+    die "that does not look like a private key (expected 0x followed by 64 hex characters)"
+  fi
+  if [ -n "$HL_WALLET" ] && ! printf '%s' "$HL_WALLET" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+    die "that does not look like an address (expected 0x followed by 40 hex characters)"
+  fi
+  ok "key received${HL_WALLET:+, trading on subaccount $HL_WALLET}"
 fi
 
 # ── 3. Namespace ─────────────────────────────────────────────────────────────
@@ -170,23 +173,23 @@ else
 fi
 
 # ── 4. Secret ────────────────────────────────────────────────────────────────
-step "Secret $DB_SECRET"
+step "Secret $HL_SECRET"
 
 create_secret() {
   # Through apply, so running again does not fail with "already exists".
   #
-  # The value never becomes a command-line argument: printf is a shell builtin, not
-  # a process, and base64 reads it from stdin, so it does not show up in ps. Encoding
-  # it also means a password containing quotes or backslashes cannot break the YAML.
+  # The key never becomes a command-line argument: printf is a shell builtin, not
+  # a process, and base64 reads it from stdin, so it does not show up in ps.
   if [ "$DRY_RUN" = 1 ]; then
-    printf '       would run: kubectl apply -f - (Secret %s/%s, url=<hidden>)\n' \
-      "$NAMESPACE" "$DB_SECRET"
+    printf '       would run: kubectl apply -f - (Secret %s/%s, private_key=<hidden>)\n' \
+      "$NAMESPACE" "$HL_SECRET"
     return
   fi
-  local encoded
-  encoded="$(printf '%s' "$DB_URL" | base64 | tr -d '\n')"
-  printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  url: %s\n' \
-    "$DB_SECRET" "$NAMESPACE" "$encoded" | kubectl apply -f - >/dev/null
+  local key_b64 wallet_b64
+  key_b64="$(printf '%s' "$HL_KEY" | base64 | tr -d '\n')"
+  wallet_b64="$(printf '%s' "$HL_WALLET" | base64 | tr -d '\n')"
+  printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  private_key: %s\n  wallet_address: "%s"\n' \
+    "$HL_SECRET" "$NAMESPACE" "$key_b64" "$wallet_b64" | kubectl apply -f - >/dev/null
 }
 if [ "$REUSE_SECRET" = 1 ]; then
   ok "left unchanged"
@@ -205,27 +208,29 @@ else
     printf '       would write: %s\n' "$VALUES_FILE"
   else
     cat > "$VALUES_FILE" <<EOF
-# Created by install.sh. There is no password in here: the connection lives in the
-# Secret $DB_SECRET. You can keep this file and put it under version control.
-database:
-  existingSecret: $DB_SECRET
+# Created by install.sh. There is no key in here: it lives in the Secret
+# $HL_SECRET. You can keep this file and put it under version control.
+hyperliquid:
+  # true: every order goes to testnet. See 'Going to mainnet' in the README
+  # before you change this.
+  testnet: true
+  existingSecret: $HL_SECRET
 
 grid:
-  # Basis for order sizing, live as well. With 20 lines and 80% allocation,
-  # 1000 means \$40 per line.
+  # Fixed size per line: startBalance x 80% / lines. With 20 lines, 1000 means
+  # \$40 per line. Hyperliquid refuses orders under \$10.
   startBalance: 1000
   coins:
     BTC-20:
       coin: BTC
       active: true
-      shadow: true
       allocationPct: 100
       upper: 83000
       lower: 75000
       numLines: 20
       leverage: 1
 EOF
-    ok "written"
+    ok "written -- check the grid bounds against the current testnet price"
   fi
 fi
 
@@ -249,26 +254,13 @@ ok "deployed"
 # ── 7. Verify ────────────────────────────────────────────────────────────────
 step "Checking that it works"
 
-say "  waiting for the pods to become ready (the dal applies the schema first)..."
+say "  waiting for the pods to become ready..."
 if ! kubectl -n "$NAMESPACE" wait --for=condition=available --timeout=180s \
-     deployment/"$RELEASE"-dal deployment/"$RELEASE"-grid-static >/dev/null 2>&1; then
+     deployment/"$RELEASE"-connector deployment/"$RELEASE"-grid-static >/dev/null 2>&1; then
   warn "not every pod was ready within three minutes"
 fi
 
 problems=0
-
-# Accept the old Dutch message too, so this script still reads an older chart right.
-schema_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-dal -c schema 2>/dev/null || true)"
-if printf '%s' "$schema_log" | grep -q "CREATE TABLE"; then
-  ok "schema applied"
-elif printf '%s' "$schema_log" | grep -qE "waiting for the database|wacht op de database"; then
-  err "the dal cannot reach your database"
-  say "       Almost always the direct connection instead of the session pooler:"
-  say "       db.<ref>.supabase.co is IPv6-only."
-  problems=1
-else
-  ok "schema was already in place"
-fi
 
 pods="$(kubectl -n "$NAMESPACE" get pods --no-headers 2>/dev/null || true)"
 not_running="$(printf '%s\n' "$pods" | awk '$3 != "Running" && NF > 0')"
@@ -288,22 +280,24 @@ fi
 
 # The readiness probe makes the wait above meaningful, but the startup log line can
 # still trail it by a moment. Poll for it instead of looking once.
-say "  waiting for the bot to build its grid..."
+say "  waiting for the bot to start its grid..."
 bot_log=""
 for _ in $(seq 1 30); do
   bot_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --tail=80 2>/dev/null || true)"
-  if printf '%s' "$bot_log" | grep -qE "Initialising grid|Recovering state"; then
+  if printf '%s' "$bot_log" | grep -qE "\] started: |Refusing to start"; then
     break
   fi
   sleep 3
 done
 
-if printf '%s' "$bot_log" | grep -q "Initialising grid"; then
-  ok "grid built: $(printf '%s' "$bot_log" | grep -o 'Grid ready — .*' | head -1)"
-elif printf '%s' "$bot_log" | grep -q "Recovering state"; then
-  ok "existing grid recovered"
+if printf '%s' "$bot_log" | grep -q "Refusing to start"; then
+  err "the bot refuses this configuration:"
+  printf '%s\n' "$bot_log" | sed -n '/Refusing to start/,$p' | head -6 | sed 's/^/       /'
+  problems=1
+elif printf '%s' "$bot_log" | grep -q "\] started: "; then
+  ok "$(printf '%s' "$bot_log" | grep -o '\] started: .*' | head -1 | sed 's/^\] //')"
 else
-  err "the bot did not build a grid within 90 seconds"
+  err "the bot did not start a grid within 90 seconds"
   last_lines="$(printf '%s' "$bot_log" | tail -3)"
   if [ -n "$last_lines" ]; then
     printf '%s\n' "$last_lines" | sed 's/^/       /'
@@ -311,30 +305,41 @@ else
   problems=1
 fi
 
-say "  checking that the fill loop runs cleanly (35 seconds)..."
-sleep 35
-fill_error="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --since=40s 2>/dev/null | grep "Fill loop error" | head -1 || true)"
-if [ -n "$fill_error" ]; then
-  err "error in the fill loop:"
-  say "       $fill_error"
-  problems=1
-else
-  ok "fill loop runs cleanly"
+if [ "$problems" = 0 ]; then
+  say "  watching the first rounds (35 seconds)..."
+  sleep 35
+  recent="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --since=40s 2>/dev/null || true)"
+  round_error="$(printf '%s' "$recent" | grep -E "round skipped|round failed|start failed" | head -1 || true)"
+  hold="$(printf '%s' "$recent" | grep "on hold:" | head -1 || true)"
+  if [ -n "$round_error" ]; then
+    err "the bot cannot work with the exchange:"
+    say "       $round_error"
+    problems=1
+  elif [ -n "$hold" ]; then
+    warn "the grid is on hold -- it places no new buys:"
+    say "       ${hold#*on hold: }"
+  else
+    ok "rounds run cleanly"
+  fi
 fi
 
 # ── Verdict ──────────────────────────────────────────────────────────────────
 if [ "$problems" = 0 ]; then
-  step "${green}Done${reset} -- your stack is running"
+  step "${green}Done${reset} -- your grid runs on testnet"
   cat <<EOF
 
   Follow along:
     kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static -f
 
+  See every cell:
+    kubectl -n $NAMESPACE port-forward svc/$RELEASE-grid-static 8080:8080
+    curl -s localhost:8080/status
+
   Change your grids: edit $VALUES_FILE, then run
     helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
 
-  Trading with real money: see 'Going live' in the README. That step is manual on
-  purpose -- it is not something you want to do quickly.
+  Trading with real money: see 'Going to mainnet' in the README. That step is
+  manual on purpose -- it is not something you want to do quickly.
 EOF
 else
   step "${red}Something is wrong${reset}"
@@ -342,12 +347,12 @@ else
 
   The problems are listed above. To see more:
     kubectl -n $NAMESPACE get pods
-    kubectl -n $NAMESPACE logs deploy/$RELEASE-dal -c schema
+    kubectl -n $NAMESPACE logs deploy/$RELEASE-connector --tail=50
     kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static --tail=50
 
-  If no grid is live yet, starting over is safe:
+  On testnet, starting over is safe:
     helm uninstall $RELEASE -n $NAMESPACE
-  If a grid already trades with real money, check the exchange before you do.
+  Orders the bot placed stay on the exchange until you cancel them there.
 EOF
   exit 1
 fi
