@@ -16,8 +16,8 @@
       {
         "name": "Deploys", "enable": true, "iconColor": "purple",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "expr": "grid_build_info{namespace=\"$namespace\"} and on (pod) (changes(process_start_time_seconds{namespace=\"$namespace\"}[2m]) > 0)",
-        "step": "1m", "titleFormat": "grid-static started: {{commit}}", "textFormat": "{{pod}}",
+        "expr": "max by (commit) (grid_build_info{namespace=\"$namespace\"}) and on () (changes(max(process_start_time_seconds{namespace=\"$namespace\", job=~\".+-grid-static\"})[2m:30s]) > 0)",
+        "step": "1m", "titleFormat": "grid-static started: {{commit}}", "textFormat": "",
         "tagKeys": "commit"
       }
     ]
