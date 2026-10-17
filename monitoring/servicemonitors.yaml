@@ -1,0 +1,38 @@
+# Let the Prometheus Operator scrape grid-static and the connector.
+#
+# Written for the default install: release "gridstatic" in namespace
+# "gridstatic". The label below is what kube-prometheus-stack selects
+# ServiceMonitors by -- `release: <its release name>`; check yours with
+#   kubectl get prometheus -A -o jsonpath='{..serviceMonitorSelector}'
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gridstatic-grid-static
+  namespace: gridstatic
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels: { app: gridstatic-grid-static }
+  endpoints:
+    - port: http
+      # /metrics answers with a redirect to /metrics/; ask for the target directly.
+      path: /metrics/
+      interval: 30s
+---
+# The connector: the only service that talks to Hyperliquid, so the one that
+# can say how long the exchange takes to answer.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gridstatic-connector
+  namespace: gridstatic
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels: { app: gridstatic-connector }
+  endpoints:
+    - port: http
+      path: /metrics/
+      interval: 30s

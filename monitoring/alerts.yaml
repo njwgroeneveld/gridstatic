@@ -1,0 +1,36 @@
+# Alert rules, evaluated by Prometheus and sent by Alertmanager -- outside the
+# bot, so they also arrive when the bot itself is down. Written for the
+# default install in namespace "gridstatic"; the label is what
+# kube-prometheus-stack selects rules by (`ruleSelector`).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gridstatic-alerts
+  namespace: gridstatic
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: gridstatic
+      rules:
+        - alert: GridstaticDown
+          # absent(), not up == 0: a pod that is gone takes its scrape target
+          # with it, and then there is no `up` series left to be 0.
+          expr: absent(up{namespace="gridstatic", job="gridstatic-grid-static"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "gridstatic is down"
+            description: "No healthy grid-static target for 5 minutes. No round runs: no new sells and no buys. The stops on the exchange still protect the positions."
+            runbook_url: "https://github.com/njwgroeneveld/gridstatic/blob/master/monitoring/README.md#gridstaticdown"
+        - alert: GridstaticHold
+          # One alert per grid. A hold of a few rounds, right after a fill, is normal.
+          expr: max by (namespace, coin) (grid_on_hold{namespace="gridstatic"}) == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.coin }} is on hold: no new buys"
+            description: "The position of {{ $labels.coin }} has not added up for 30 minutes. The reason is in the bot's log and in /status."
+            runbook_url: "https://github.com/njwgroeneveld/gridstatic/blob/master/monitoring/README.md#gridstatichold"

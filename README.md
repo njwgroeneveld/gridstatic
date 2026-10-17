@@ -112,9 +112,9 @@ move to mainnet are in [`docs/operations.md`](docs/operations.md).
 | | |
 |---|---|
 | Services | Python 3.11, FastAPI, httpx, `hyperliquid-python-sdk` |
-| Tests | pytest — 213 tests, the decision logic covered case by case |
+| Tests | pytest — 251 tests, the decision logic covered case by case |
 | Platform | Kubernetes, Helm, GitHub Actions, multi-arch images on ghcr.io |
-| Operations | Prometheus metrics, Telegram alerts, a read-only consistency check (`tools/gridcheck.py`) |
+| Operations | Prometheus metrics with an optional dashboard and alerts ([`monitoring/`](monitoring/README.md)), Telegram alerts, a read-only consistency check (`tools/gridcheck.py`) |
 
 ```
 services/grid-static/       strategy — src/reconcile.py decides, src/strategy.py acts
@@ -123,6 +123,7 @@ services/telegram-alerter/  alerts and the /status command
 chart/                      Helm chart
 install.sh                  one-command installer
 tools/gridcheck.py          independent check of a grid against the exchange
+monitoring/                 optional: Grafana dashboard, alert rules, scrape targets
 docs/                       design.md (why), operations.md (how)
 ```
 
