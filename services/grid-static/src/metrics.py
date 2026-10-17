@@ -38,3 +38,31 @@ grid_order_placement_latency = Histogram(
     "grid_order_placement_latency_seconds", "Time to place one order",
     ["coin"], buckets=[0.1, 0.25, 0.5, 1, 2.5, 5]
 )
+
+# ── What the exchange says, read every round ──────────────────────────────────
+# The P&L above is the bot's own view of completed cycles and starts at zero on
+# every restart. These come from the exchange: the realised ones are counters,
+# so increase() over any range survives a restart -- only fills that happen
+# while the pod is down are missed.
+grid_position = Gauge(
+    "grid_position", "Position in coin, as the exchange reports it", ["coin"]
+)
+grid_position_value_usd = Gauge(
+    "grid_position_value_usd", "Position times the mark price", ["coin"]
+)
+grid_unrealized_pnl_usd = Gauge(
+    "grid_unrealized_pnl_usd", "(mark - entry price) x position", ["coin"]
+)
+grid_realized_gain_usd = Counter(
+    "grid_realized_gain_usd", "Sum of positive closedPnl of this grid's fills", ["coin"]
+)
+grid_realized_loss_usd = Counter(
+    "grid_realized_loss_usd", "Sum of negative closedPnl of this grid's fills, "
+    "stop-outs included, as a positive number", ["coin"]
+)
+grid_fees_usd = Counter(
+    "grid_fees_usd", "Fees paid on this grid's fills", ["coin"]
+)
+grid_account_value_usd = Gauge(
+    "grid_account_value_usd", "Account value on the perp dex the grid trades on", ["dex"]
+)

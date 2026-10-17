@@ -74,6 +74,23 @@ grid:
   #     leverage: 1
   coins: {}
 
+monitoring:
+  # Both need a Prometheus Operator and a Grafana with the dashboard sidecar, as
+  # kube-prometheus-stack installs them. Off by default: without the operator a
+  # ServiceMonitor is an unknown kind and the install fails.
+  serviceMonitor:
+    enabled: false
+    # Labels your Prometheus selects ServiceMonitors by. kube-prometheus-stack
+    # wants `release: <its release name>`; see
+    # `kubectl get prometheus -A -o jsonpath='{..serviceMonitorSelector}'`.
+    labels: {}
+    interval: 30s
+  grafanaDashboard:
+    enabled: false
+    # The label the Grafana sidecar looks for; this is kube-prometheus-stack's default.
+    labels:
+      grafana_dashboard: "1"
+
 scheduling:
   # Empty: the scheduler picks a node. The images are built for amd64 and arm64.
   nodeSelector: {}

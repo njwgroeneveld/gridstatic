@@ -12,6 +12,7 @@ is built this way, see the [README](../README.md) and [design decisions](design.
 - [When the grid holds](#when-the-grid-holds)
 - [Going to mainnet](#going-to-mainnet)
 - [Checking a running grid](#checking-a-running-grid)
+- [Prometheus and Grafana (optional)](#prometheus-and-grafana-optional)
 - [Telegram alerts (optional)](#telegram-alerts-optional)
 - [Security](#security)
 - [Uninstalling](#uninstalling)
@@ -383,6 +384,39 @@ python3 tools/gridcheck.py --address 0xTHE_ACCOUNT_THE_BOT_TRADES_ON
 | what the next round would place or cancel | a grid that is not complete when it should be |
 
 It needs `kubectl` access to the namespace (or `--settings settings.yaml`) and Python 3.
+
+---
+
+## Prometheus and Grafana (optional)
+
+grid-static serves Prometheus metrics on `:8080/metrics/`. With
+[kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
+in the cluster, the chart can register the scrape target and ship a dashboard:
+
+```yaml
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: monitoring     # the release name of your kube-prometheus-stack
+  grafanaDashboard:
+    enabled: true
+```
+
+The dashboard — *gridstatic* in Grafana — shows per grid: net realised P&L, unrealised P&L,
+position value, account value per perp dex, whether the grid holds, the price inside the grid,
+fills, errors and latency. Without the operator, import `chart/files/dashboard.json` by hand.
+
+| metric | what it is |
+|---|---|
+| `grid_realized_gain_usd_total`, `grid_realized_loss_usd_total`, `grid_fees_usd_total` | `closedPnl` and fees of the grid's fills on the exchange, **stop-outs included**. Net realised P&L over a range is `increase(gain) - increase(loss) - increase(fees)`. |
+| `grid_position`, `grid_position_value_usd`, `grid_unrealized_pnl_usd` | the position as the exchange reports it, valued at the mark price |
+| `grid_account_value_usd{dex}` | the balance the grid's orders draw on |
+| `grid_on_hold` | 1 while new buys are held back — see [When the grid holds](#when-the-grid-holds) |
+| `grid_profit_usd` | the bot's own view of completed buy→sell cycles. It starts at zero on every restart and leaves out stop-outs; use the realised counters above for P&L. |
+
+The realised counters count each fill once, from the moment the pod starts. Fills that happen
+while the pod is down are not counted.
 
 ---
 

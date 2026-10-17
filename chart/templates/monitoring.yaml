@@ -1,0 +1,30 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-grid-static
+  {{- with .Values.monitoring.serviceMonitor.labels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-grid-static }
+  endpoints:
+    - port: http
+      # /metrics answers with a redirect to /metrics/; ask for the target directly.
+      path: /metrics/
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.monitoring.grafanaDashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dashboard
+  {{- with .Values.monitoring.grafanaDashboard.labels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  gridstatic.json: |-
+{{ .Files.Get "files/dashboard.json" | indent 4 }}
+{{- end }}

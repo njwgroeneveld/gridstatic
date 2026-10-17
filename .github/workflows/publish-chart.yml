@@ -79,6 +79,19 @@ jobs:
             exit 1
           fi
 
+      - name: Monitoring is opt-in and renders a valid dashboard
+        run: |
+          # Off by default: without the Prometheus Operator a ServiceMonitor fails the install.
+          if helm template t ./chart $KEY | grep -q "^kind: ServiceMonitor"; then
+            echo "ERROR: a ServiceMonitor renders with monitoring left at its defaults"
+            exit 1
+          fi
+          out=$(helm template t ./chart $KEY --set monitoring.serviceMonitor.enabled=true \
+                --set monitoring.grafanaDashboard.enabled=true)
+          echo "$out" | grep -q "^kind: ServiceMonitor"
+          echo "$out" | grep -q "gridstatic.json: |-"
+          python3 -m json.tool chart/files/dashboard.json > /dev/null
+
       - name: Login
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
 

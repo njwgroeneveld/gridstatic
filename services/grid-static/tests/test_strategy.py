@@ -223,6 +223,58 @@ async def test_a_closed_cycle_reports_its_profit_after_fees(grid, connector, ale
     assert closed[0]["buy_price"] == 130.0 and closed[0]["sell_price"] == 140.0
 
 
+def _sample(name, **labels):
+    from prometheus_client import REGISTRY
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+async def test_realised_pnl_comes_from_the_exchange_stop_included(grid, connector, clock):
+    statuses = {8: encode(grid.fp, 3, BUY), 9: encode(grid.fp, 3, BUY),
+                10: encode(grid.fp, 3, SELL), 11: encode(grid.fp, 0, STOP)}
+    connector.get_order_status.side_effect = lambda oid: {"oid": oid, "cloid": statuses[oid],
+                                                          "status": "filled"}
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
+    await grid.start()
+    before = {n: _sample(n, coin="BTC") for n in
+              ("grid_realized_gain_usd_total", "grid_realized_loss_usd_total", "grid_fees_usd_total")}
+    sell = _fill(10, SELL, 0.38, 140, START_MS + 2000, fee="0.02")
+    sell["closedPnl"] = "3.8"
+    stop = _fill(11, SELL, 0.38, 95, START_MS + 3000, fee="0.03")
+    stop["closedPnl"] = "-13.3"
+    connector.get_fills.return_value = [
+        _fill(8, BUY, 0.38, 130, START_MS - 5000, fee="0.05"),   # before the start: not counted
+        _fill(9, BUY, 0.38, 130, START_MS + 1000, fee="0.01"), sell, stop]
+    await grid.run_round()
+    clock.ms += 30_000
+    await grid.run_round()                                    # the same fills again: counted once
+    delta = {n: _sample(n, coin="BTC") - v for n, v in before.items()}
+    assert delta["grid_realized_gain_usd_total"] == pytest.approx(3.8)
+    assert delta["grid_realized_loss_usd_total"] == pytest.approx(13.3)
+    assert delta["grid_fees_usd_total"] == pytest.approx(0.06)
+
+
+async def test_position_and_account_value_are_exported(config, connector, alerter, clock):
+    from src.strategy import StaticGrid
+    config["coin"] = "xyz:XYZ100"
+    g = StaticGrid("NDX", config, strategy_allocation_pct=100, start_balance=550,
+                   connector=connector, alerter=alerter, clock=clock)
+    connector.get_open_orders.return_value = []
+    connector.get_positions.return_value = {"xyz:XYZ100": {"szi": 0.5, "entry_px": 150.0}}
+    connector.get_account_value.return_value = 99.5
+    await g.start()
+    await g.run_round()
+    assert _sample("grid_position", coin="xyz:XYZ100") == 0.5
+    assert _sample("grid_position_value_usd", coin="xyz:XYZ100") == pytest.approx(77.5)
+    assert _sample("grid_unrealized_pnl_usd", coin="xyz:XYZ100") == pytest.approx(2.5)
+    assert _sample("grid_account_value_usd", dex="xyz") == 99.5
+
+
+async def test_an_unreadable_account_value_does_not_stop_the_round(grid, connector):
+    await grid.start()
+    connector.get_account_value.side_effect = RuntimeError("down")
+    assert await grid.run_round() is not None
+
+
 async def test_price_outside_the_grid_is_alerted(grid, connector, alerter):
     await grid.start()
     connector.get_price.return_value = 95.0

@@ -59,6 +59,7 @@ class StaticGrid:
         self._cloid_of: dict[int, str | None] = {}
         self._started_ms = self._now_ms()
         self._announced: dict[int, int] = {}    # oid -> fill time, see _announce_fills
+        self._counted: dict[str, int] = {}      # fill id -> fill time, see _report_exchange
         self._hold: str | None = None
         self._hold_alerted_ms = 0
         self._notice_alerted_ms: dict[str, int] = {}
@@ -74,6 +75,11 @@ class StaticGrid:
         self.last_position: float | None = None
         self.realized_24h = 0.0
         self._stopped_out = False     # announced once, cleared by the first buy after it
+        # A labelled counter exists only once touched. Without these, gain - loss
+        # in PromQL is empty for as long as the grid has made no loss.
+        for counter in (metrics.grid_realized_gain_usd, metrics.grid_realized_loss_usd,
+                        metrics.grid_fees_usd):
+            counter.labels(coin=self.coin)
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)
@@ -175,7 +181,8 @@ class StaticGrid:
             return None
         self._failed_reads = 0
 
-        position = float((positions.get(self.coin) or {}).get("szi", 0.0))
+        held = positions.get(self.coin) or {}
+        position = float(held.get("szi", 0.0))
         for o in orders:
             if o.get("oid") is not None:
                 self._cloid_of[int(o["oid"])] = o.get("cloid")
@@ -189,6 +196,7 @@ class StaticGrid:
         placed, self._placed_oids = await self._execute(p)
         await self._report(p, tied, price, {int(o["oid"]) for o in orders if o.get("oid") is not None})
         await self._report_stop(position, price, placed)
+        await self._report_exchange(position, float(held.get("entry_px") or 0.0), price, tied)
 
         self.last_plan, self.last_price, self.last_position = p, price, position
         self._last_placed = placed
@@ -303,6 +311,40 @@ class StaticGrid:
             self._stopped_out = False
             log.info(f"[{self.coin_key}] resumed: price {price} is back inside the grid")
             await self.alerter.send_alert("grid_resumed", {**self._label(), "price": price})
+
+    async def _report_exchange(self, position: float, entry_px: float, price: float,
+                               tied: list[tuple[TaggedFill, dict]]) -> None:
+        """The position, its value and the realised P&L as the exchange has them.
+        Realised P&L is the closedPnl of this grid's fills, stop-outs included,
+        each fill counted once and only fills since the start: after a restart
+        the counters begin again, and increase() in Prometheus handles that."""
+        metrics.grid_position.labels(coin=self.coin).set(position)
+        metrics.grid_position_value_usd.labels(coin=self.coin).set(position * price)
+        metrics.grid_unrealized_pnl_usd.labels(coin=self.coin).set(
+            (price - entry_px) * position if position else 0.0)
+
+        for t, f in tied:
+            key = str(f.get("tid") or f"{f['oid']}-{t.time}-{f['sz']}")
+            if t.time <= self._started_ms or key in self._counted:
+                continue
+            self._counted[key] = t.time
+            pnl = float(f.get("closedPnl") or 0)
+            if pnl > 0:
+                metrics.grid_realized_gain_usd.labels(coin=self.coin).inc(pnl)
+            elif pnl < 0:
+                metrics.grid_realized_loss_usd.labels(coin=self.coin).inc(-pnl)
+            metrics.grid_fees_usd.labels(coin=self.coin).inc(max(float(f.get("fee") or 0), 0.0))
+        horizon = self._now_ms() - self.lookback_ms
+        for key in [k for k, t in self._counted.items() if t < horizon]:
+            del self._counted[key]
+
+        dex = dex_of(self.coin)
+        try:
+            value = await self.connector.get_account_value(dex=dex)
+        except Exception:
+            metrics.grid_errors_total.labels(type="account_value").inc()
+            return
+        metrics.grid_account_value_usd.labels(dex=dex or "default").set(value)
 
     async def _notice(self, msg: str, key: str | None = None) -> None:
         """An error alert, at most once an hour per kind."""
