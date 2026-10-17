@@ -409,8 +409,9 @@ monitoring:
 ```
 
 The dashboard — *gridstatic* in Grafana — fits one screen: per grid whether it trades or holds,
-its realised P&L and its price between the bounds; the active alerts; how long Hyperliquid takes
-per request type; and whether the bot is up and its rounds complete. Without the operator, import
+its realised P&L and its price between the bounds; when each alert was pending or firing; how long
+Hyperliquid takes per request type; whether the bot is up and its rounds complete; and CPU,
+CPU throttling and memory per pod against their limits. Without the operator, import
 `chart/files/dashboard.json` by hand.
 
 | metric | what it is |
