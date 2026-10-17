@@ -14,6 +14,23 @@ spec:
       # /metrics answers with a redirect to /metrics/; ask for the target directly.
       path: /metrics/
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
+---
+# The connector: the only service that talks to Hyperliquid, so the one that
+# can say how long the exchange takes to answer.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-connector
+  {{- with .Values.monitoring.serviceMonitor.labels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels: { app: {{ .Release.Name }}-connector }
+  endpoints:
+    - port: http
+      path: /metrics/
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
 {{- end }}
 {{- if .Values.monitoring.prometheusRule.enabled }}
 ---

@@ -3,25 +3,33 @@ import os
 import time
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query, Request
+from prometheus_client import make_asgi_app
 from pydantic import BaseModel
+from src import metrics
 from src.info_client import InfoClient
 from src.exchange_client import ExchangeClient
 
 log = logging.getLogger("connector.access")
 
 app = FastAPI(title="Connector", version="1.0.0")
+app.mount("/metrics", make_asgi_app())
 
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     t0 = time.time()
     response = await call_next(request)
-    ms = (time.time() - t0) * 1000
+    seconds = time.time() - t0
     bot = request.headers.get("X-Bot-Name", "-")
     log.info(
         f"{request.client.host} [{bot}] \"{request.method} {request.url.path}\" "
-        f"{response.status_code} {ms:.0f}ms"
+        f"{response.status_code} {seconds * 1000:.0f}ms"
     )
+    # The route template, not the path: /orders/{coin} is one series, not one per coin.
+    route = request.scope.get("route")
+    if route is not None and not request.url.path.startswith("/metrics"):
+        metrics.http_request_duration.labels(
+            request.method, route.path, str(response.status_code)).observe(seconds)
     return response
 _info = InfoClient()
 

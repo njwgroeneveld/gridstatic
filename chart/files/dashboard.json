@@ -1,23 +1,43 @@
 {
   "uid": "gridstatic",
   "title": "gridstatic",
-  "tags": ["gridstatic", "trading"],
+  "tags": [
+    "gridstatic",
+    "trading"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "1m",
-  "time": { "from": "now-7d", "to": "now" },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
   "annotations": {
     "list": [
       {
-        "builtIn": 1, "name": "Annotations & Alerts", "type": "dashboard", "enable": true,
-        "hide": true, "iconColor": "rgba(0, 211, 255, 1)",
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" }
+        "builtIn": 1,
+        "name": "Annotations & Alerts",
+        "type": "dashboard",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        }
       },
       {
-        "name": "Deploys", "enable": true, "iconColor": "purple",
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "name": "Deploys",
+        "enable": true,
+        "iconColor": "purple",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "expr": "max by (commit) (grid_build_info{namespace=\"$namespace\"}) and on () (changes(max(process_start_time_seconds{namespace=\"$namespace\", job=~\".+-grid-static\"})[2m:30s]) > 0)",
-        "step": "1m", "titleFormat": "grid-static started: {{commit}}", "textFormat": "",
+        "step": "1m",
+        "titleFormat": "grid-static started: {{commit}}",
+        "textFormat": "",
         "tagKeys": "commit"
       }
     ]
@@ -25,404 +45,1762 @@
   "templating": {
     "list": [
       {
-        "name": "datasource", "label": "Data source", "type": "datasource",
-        "query": "prometheus", "current": {}, "hide": 0
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
       },
       {
-        "name": "namespace", "type": "query", "hide": 2,
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": { "query": "label_values(grid_on_hold, namespace)", "refId": "namespace" },
-        "definition": "label_values(grid_on_hold, namespace)", "refresh": 2
+        "name": "namespace",
+        "type": "query",
+        "hide": 2,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(grid_on_hold, namespace)",
+          "refId": "namespace"
+        },
+        "definition": "label_values(grid_on_hold, namespace)",
+        "refresh": 2
       },
       {
-        "name": "coin", "label": "Grid", "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": { "query": "label_values(grid_on_hold{namespace=\"$namespace\"}, coin)", "refId": "coin" },
+        "name": "coin",
+        "label": "Grid",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(grid_on_hold{namespace=\"$namespace\"}, coin)",
+          "refId": "coin"
+        },
         "definition": "label_values(grid_on_hold{namespace=\"$namespace\"}, coin)",
-        "refresh": 2, "multi": true, "includeAll": true, "allValue": ".*",
-        "current": { "text": "All", "value": "$__all" }, "sort": 1, "hide": 0
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "hide": 0
       }
     ]
   },
   "panels": [
     {
-      "id": 1, "type": "stat", "title": "Net realised P&L (time range)",
+      "id": 1,
+      "type": "stat",
+      "title": "Net realised P&L (time range)",
       "description": "closedPnl minus fees of every fill of the grid, stop-outs included -- from the exchange. Fills while the pod was down are missing.",
-      "gridPos": { "x": 0, "y": 0, "w": 5, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{
-        "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "sum by (coin) (increase(grid_realized_gain_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[$__range]) - increase(grid_realized_loss_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[$__range]) - increase(grid_fees_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[$__range]))"
-      }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "red", "value": null }, { "color": "green", "value": 0 } ] } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "id": 2, "type": "stat", "title": "Unrealised P&L",
-      "description": "(mark price - entry price) x position: what the open position would make or lose if closed now.",
-      "gridPos": { "x": 5, "y": 0, "w": 5, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_unrealized_pnl_usd{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "red", "value": null }, { "color": "green", "value": 0 } ] } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "id": 3, "type": "stat", "title": "Position value",
-      "description": "Position x mark price: how much coin the grid holds, in dollars.",
-      "gridPos": { "x": 10, "y": 0, "w": 5, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_position_value_usd{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "id": 4, "type": "stat", "title": "Account value",
-      "description": "The balance each grid's orders draw on. Hyperliquid keeps one balance per perp dex: BTC trades on the default dex, a HIP-3 market such as xyz:XYZ100 on its own. Grids on the same dex share one balance.",
-      "gridPos": { "x": 15, "y": 0, "w": 5, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_account_value_usd{namespace=\"$namespace\", coin=~\"$coin\", coin!=\"\"})" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "color": { "mode": "fixed", "fixedColor": "text" } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "id": 5, "type": "stat", "title": "State",
-      "description": "HOLD: no new buys until the position adds up again. The reason is in the logs, in /status and in the Telegram alert.",
-      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_on_hold{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": {
-        "mappings": [{ "type": "value", "options": {
-          "0": { "text": "trading", "color": "green" },
-          "1": { "text": "HOLD", "color": "red" } } }],
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
-      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "id": 6, "type": "timeseries", "title": "Net realised P&L per hour",
-      "description": "Set the time range to a day or more: each bar is a whole hour.",
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "interval": "1h",
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "sum by (coin) (increase(grid_realized_gain_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]) - increase(grid_realized_loss_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]) - increase(grid_fees_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]))" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi" } }
-    },
-    {
-      "id": 7, "type": "timeseries", "title": "Account value",
-      "description": "The equity curve, per grid. Grids on the same perp dex share one balance.",
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_account_value_usd{namespace=\"$namespace\", coin=~\"$coin\", coin!=\"\"})" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "custom": { "fillOpacity": 10 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
-    },
-    {
-      "id": 8, "type": "timeseries", "title": "Unrealised P&L",
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_unrealized_pnl_usd{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "custom": { "fillOpacity": 10 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
-    },
-    {
-      "id": 9, "type": "timeseries", "title": "Position value",
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_position_value_usd{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2,
-        "custom": { "fillOpacity": 10, "lineInterpolation": "stepAfter" } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
-    },
-
-    {
-      "id": 30, "type": "row", "title": "Price and grid", "collapsed": false,
-      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 1 }, "panels": []
-    },
-    {
-      "id": 31, "type": "bargauge", "title": "Where the price is in the grid",
-      "description": "0% is the lowest line, 100% the highest. Red: the price is outside the grid -- below it the grid has nothing to buy, above it nothing left to sell.",
-      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 5 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "(max by (coin) (grid_mark_price{namespace=\"$namespace\", coin=~\"$coin\"}) - max by (coin) (grid_lower_bound{namespace=\"$namespace\", coin=~\"$coin\"})) / (max by (coin) (grid_upper_bound{namespace=\"$namespace\", coin=~\"$coin\"}) - max by (coin) (grid_lower_bound{namespace=\"$namespace\", coin=~\"$coin\"})) * 100" }],
-      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "min": 0, "max": 100,
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "red", "value": null }, { "color": "green", "value": 0 },
-          { "color": "red", "value": 100 } ] } }, "overrides": [] },
-      "options": { "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true,
-        "valueMode": "color", "namePlacement": "left",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "id": 32, "type": "timeseries", "title": "Price and grid: $coin",
-      "description": "The mark price between the grid's lowest and highest line, and the stop-loss below it.",
-      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 9 },
-      "repeat": "coin", "repeatDirection": "h", "maxPerRow": 2,
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "targets": [
-        { "refId": "A", "legendFormat": "price",
-          "expr": "max(grid_mark_price{namespace=\"$namespace\", coin=\"$coin\"})" },
-        { "refId": "B", "legendFormat": "upper bound",
-          "expr": "max(grid_upper_bound{namespace=\"$namespace\", coin=\"$coin\"})" },
-        { "refId": "C", "legendFormat": "lower bound",
-          "expr": "max(grid_lower_bound{namespace=\"$namespace\", coin=\"$coin\"})" },
-        { "refId": "D", "legendFormat": "stop-loss",
-          "expr": "max(grid_stop_loss_price{namespace=\"$namespace\", coin=\"$coin\"})" }],
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "sum by (coin) (increase(grid_realized_gain_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[$__range]) - increase(grid_realized_loss_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[$__range]) - increase(grid_fees_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[$__range]))"
+        }
+      ],
       "fieldConfig": {
-        "defaults": { "unit": "none", "decimals": 0, "custom": { "lineWidth": 2, "fillOpacity": 0 } },
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "price" }, "properties": [
-            { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] },
-          { "matcher": { "id": "byRegexp", "options": "upper bound|lower bound" }, "properties": [
-            { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } },
-            { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-            { "id": "custom.lineWidth", "value": 1 } ] },
-          { "matcher": { "id": "byName", "options": "stop-loss" }, "properties": [
-            { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
-            { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [4, 6] } },
-            { "id": "custom.lineWidth", "value": 1 } ] } ] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
-    },
-
-    {
-      "id": 40, "type": "row", "title": "Alerts", "collapsed": false,
-      "gridPos": { "x": 0, "y": 35, "w": 24, "h": 1 }, "panels": []
-    },
-    {
-      "id": 41, "type": "table", "title": "Active alerts",
-      "description": "From Prometheus: pending is counting down its 'for' time, firing has gone to Alertmanager and Telegram. GridstaticDown belongs to no single grid.",
-      "gridPos": { "x": 0, "y": 36, "w": 10, "h": 7 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "format": "table", "instant": true,
-        "expr": "ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\"}" }],
-      "transformations": [{ "id": "organize", "options": {
-        "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "namespace": true },
-        "indexByName": { "alertname": 0, "coin": 1, "alertstate": 2, "severity": 3 },
-        "renameByName": { "alertname": "Alert", "coin": "Grid", "alertstate": "State", "severity": "Severity" } } }],
-      "fieldConfig": { "defaults": { "noValue": "No active alerts" },
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "State" }, "properties": [
-            { "id": "mappings", "value": [{ "type": "value", "options": {
-              "firing": { "color": "red", "text": "firing" },
-              "pending": { "color": "orange", "text": "pending" } } }] },
-            { "id": "custom.cellOptions", "value": { "type": "color-background" } } ] } ] },
-      "options": { "showHeader": true, "cellHeight": "sm" }
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 42, "type": "state-timeline", "title": "Alerts over time",
-      "description": "Orange: pending. Red: firing. Empty: all clear.",
-      "gridPos": { "x": 10, "y": 36, "w": 14, "h": 7 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{alertname}} {{coin}}",
-        "expr": "(max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"firing\"}) * 2) or max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"pending\"})" }],
-      "fieldConfig": { "defaults": {
-        "mappings": [{ "type": "value", "options": {
-          "1": { "text": "pending", "color": "orange" },
-          "2": { "text": "firing", "color": "red" } } }],
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "orange", "value": null }, { "color": "red", "value": 2 } ] } }, "overrides": [] },
-      "options": { "showValue": "never", "mergeValues": true, "rowHeight": 0.8,
-        "legend": { "showLegend": false } }
-    },
-    {
-      "id": 43, "type": "state-timeline", "title": "Hold",
-      "description": "Every hold, also the short ones the GridstaticHold alert leaves out.",
-      "gridPos": { "x": 0, "y": 43, "w": 24, "h": 5 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "max by (coin) (grid_on_hold{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": {
-        "mappings": [{ "type": "value", "options": {
-          "0": { "text": "trading", "color": "green" },
-          "1": { "text": "HOLD", "color": "red" } } }],
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
-      "options": { "showValue": "never", "mergeValues": true, "rowHeight": 0.8,
-        "legend": { "showLegend": false } }
-    },
-
-    {
-      "id": 50, "type": "row", "title": "Activity", "collapsed": false,
-      "gridPos": { "x": 0, "y": 48, "w": 24, "h": 1 }, "panels": []
-    },
-    {
-      "id": 51, "type": "timeseries", "title": "Fills per hour",
-      "gridPos": { "x": 0, "y": 49, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "interval": "1h",
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}} {{side}}",
-        "expr": "sum by (coin, side) (increase(grid_fills_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]))" }],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0,
-        "custom": { "drawStyle": "bars", "fillOpacity": 80 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
-    },
-    {
-      "id": 52, "type": "timeseries", "title": "Errors per minute",
-      "description": "All grids together; the type says where it went wrong.",
-      "gridPos": { "x": 8, "y": 49, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{type}}",
-        "expr": "sum by (type) (rate(grid_errors_total{namespace=\"$namespace\"}[5m])) * 60" }],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2,
-        "custom": { "fillOpacity": 10 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
-    },
-    {
-      "id": 53, "type": "timeseries", "title": "Latency p95",
-      "description": "round: one cycle of one grid -- read orders, position, price and fills from the exchange, decide, place and cancel. Each grid runs its own every 30 seconds. order: placing one order. 95% of them are faster than the line.",
-      "gridPos": { "x": 16, "y": 49, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "id": 2,
+      "type": "stat",
+      "title": "Unrealised P&L",
+      "description": "(mark price - entry price) x position: what the open position would make or lose if closed now.",
+      "gridPos": {
+        "x": 5,
+        "y": 0,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "targets": [
-        { "refId": "A", "legendFormat": "round {{coin}}",
-          "expr": "histogram_quantile(0.95, sum by (le, coin) (rate(grid_round_duration_seconds_bucket{namespace=\"$namespace\", coin=~\"$coin\", coin!=\"\"}[5m])))" },
-        { "refId": "B", "legendFormat": "order {{coin}}",
-          "expr": "histogram_quantile(0.95, sum by (le, coin) (rate(grid_order_placement_latency_seconds_bucket{namespace=\"$namespace\", coin=~\"$coin\"}[30m])))" }],
-      "fieldConfig": { "defaults": { "unit": "s", "decimals": 2 }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_unrealized_pnl_usd{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
-
     {
-      "id": 20, "type": "row", "title": "Service health", "collapsed": false,
-      "gridPos": { "x": 0, "y": 57, "w": 24, "h": 1 }, "panels": []
+      "id": 3,
+      "type": "stat",
+      "title": "Position value",
+      "description": "Position x mark price: how much coin the grid holds, in dollars.",
+      "gridPos": {
+        "x": 10,
+        "y": 0,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_position_value_usd{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 21, "type": "stat", "title": "Scrape target",
+      "id": 4,
+      "type": "stat",
+      "title": "Account value",
+      "description": "The balance each grid's orders draw on. Hyperliquid keeps one balance per perp dex: BTC trades on the default dex, a HIP-3 market such as xyz:XYZ100 on its own. Grids on the same dex share one balance.",
+      "gridPos": {
+        "x": 15,
+        "y": 0,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_account_value_usd{namespace=\"$namespace\", coin=~\"$coin\", coin!=\"\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "State",
+      "description": "HOLD: no new buys until the position adds up again. The reason is in the logs, in /status and in the Telegram alert.",
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_on_hold{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "trading",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "HOLD",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Net realised P&L per hour",
+      "description": "Set the time range to a day or more: each bar is a whole hour.",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "1h",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "sum by (coin) (increase(grid_realized_gain_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]) - increase(grid_realized_loss_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]) - increase(grid_fees_usd_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Account value",
+      "description": "The equity curve, per grid. Grids on the same perp dex share one balance.",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_account_value_usd{namespace=\"$namespace\", coin=~\"$coin\", coin!=\"\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Unrealised P&L",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_unrealized_pnl_usd{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Position value",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_position_value_usd{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Price and grid",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "bargauge",
+      "title": "Where the price is in the grid",
+      "description": "0% is the lowest line, 100% the highest. Red: the price is outside the grid -- below it the grid has nothing to buy, above it nothing left to sell.",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "(max by (coin) (grid_mark_price{namespace=\"$namespace\", coin=~\"$coin\"}) - max by (coin) (grid_lower_bound{namespace=\"$namespace\", coin=~\"$coin\"})) / (max by (coin) (grid_upper_bound{namespace=\"$namespace\", coin=~\"$coin\"}) - max by (coin) (grid_lower_bound{namespace=\"$namespace\", coin=~\"$coin\"})) * 100"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "left",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Price and grid: $coin",
+      "description": "The mark price between the grid's lowest and highest line, and the stop-loss below it.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 9
+      },
+      "repeat": "coin",
+      "repeatDirection": "h",
+      "maxPerRow": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "price",
+          "expr": "max(grid_mark_price{namespace=\"$namespace\", coin=\"$coin\"})"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "upper bound",
+          "expr": "max(grid_upper_bound{namespace=\"$namespace\", coin=\"$coin\"})"
+        },
+        {
+          "refId": "C",
+          "legendFormat": "lower bound",
+          "expr": "max(grid_lower_bound{namespace=\"$namespace\", coin=\"$coin\"})"
+        },
+        {
+          "refId": "D",
+          "legendFormat": "stop-loss",
+          "expr": "max(grid_stop_loss_price{namespace=\"$namespace\", coin=\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "price"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "upper bound|lower bound"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stop-loss"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Alerts",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 41,
+      "type": "table",
+      "title": "Active alerts",
+      "description": "From Prometheus: pending is counting down its 'for' time, firing has gone to Alertmanager and Telegram. GridstaticDown belongs to no single grid.",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 10,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "expr": "ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\"}"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "job": true,
+              "namespace": true
+            },
+            "indexByName": {
+              "alertname": 0,
+              "coin": 1,
+              "alertstate": 2,
+              "severity": 3
+            },
+            "renameByName": {
+              "alertname": "Alert",
+              "coin": "Grid",
+              "alertstate": "State",
+              "severity": "Severity"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No active alerts"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "State"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "firing": {
+                        "color": "red",
+                        "text": "firing"
+                      },
+                      "pending": {
+                        "color": "orange",
+                        "text": "pending"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 42,
+      "type": "state-timeline",
+      "title": "Alerts over time",
+      "description": "Orange: pending. Red: firing. Empty: all clear.",
+      "gridPos": {
+        "x": 10,
+        "y": 36,
+        "w": 14,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{alertname}} {{coin}}",
+          "expr": "(max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"firing\"}) * 2) or max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"pending\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "pending",
+                  "color": "orange"
+                },
+                "2": {
+                  "text": "firing",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": false
+        }
+      }
+    },
+    {
+      "id": 43,
+      "type": "state-timeline",
+      "title": "Hold",
+      "description": "Every hold, also the short ones the GridstaticHold alert leaves out.",
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "max by (coin) (grid_on_hold{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "trading",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "HOLD",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": false
+        }
+      }
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Activity",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Fills per hour",
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "1h",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}} {{side}}",
+          "expr": "sum by (coin, side) (increase(grid_fills_total{namespace=\"$namespace\", coin=~\"$coin\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "Errors per minute",
+      "description": "All grids together; the type says where it went wrong.",
+      "gridPos": {
+        "x": 8,
+        "y": 49,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{type}}",
+          "expr": "sum by (type) (rate(grid_errors_total{namespace=\"$namespace\"}[5m])) * 60"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 53,
+      "type": "timeseries",
+      "title": "Latency p95",
+      "description": "round: one cycle of one grid -- read orders, position, price and fills from the exchange, decide, place and cancel. Each grid runs its own every 30 seconds. order: placing one order. 95% of them are faster than the line.",
+      "gridPos": {
+        "x": 16,
+        "y": 49,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "round {{coin}}",
+          "expr": "histogram_quantile(0.95, sum by (le, coin) (rate(grid_round_duration_seconds_bucket{namespace=\"$namespace\", coin=~\"$coin\", coin!=\"\"}[5m])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "order {{coin}}",
+          "expr": "histogram_quantile(0.95, sum by (le, coin) (rate(grid_order_placement_latency_seconds_bucket{namespace=\"$namespace\", coin=~\"$coin\"}[30m])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Exchange API",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "Hyperliquid latency p95, per request type",
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{endpoint}} {{request}}",
+          "expr": "histogram_quantile(0.95, sum by (le, endpoint, request) (rate(connector_hl_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "How long Hyperliquid takes to answer each kind of request, measured in the connector where it goes over the network. Retries are included."
+    },
+    {
+      "id": 62,
+      "type": "bargauge",
+      "title": "Where the time goes",
+      "description": "Seconds per minute spent waiting on Hyperliquid, per request type: the biggest bar is what makes a round slow -- a slow call made often outweighs a slower one made rarely.",
+      "gridPos": {
+        "x": 12,
+        "y": 58,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{endpoint}} {{request}}",
+          "instant": true,
+          "expr": "sort_desc(sum by (endpoint, request) (rate(connector_hl_request_duration_seconds_sum{namespace=\"$namespace\"}[5m])) * 60)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "left",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "Requests per minute, by outcome",
+      "gridPos": {
+        "x": 0,
+        "y": 66,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{outcome}}",
+          "expr": "sum by (outcome) (rate(connector_hl_requests_total{namespace=\"$namespace\"}[5m])) * 60"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "ok; rejected = answered but refused by the exchange (e.g. under the $10 minimum); rate_limited = HTTP 429; timeout and connection = the network."
+    },
+    {
+      "id": 64,
+      "type": "timeseries",
+      "title": "Failed requests per minute",
+      "gridPos": {
+        "x": 8,
+        "y": 66,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{endpoint}} {{request}}: {{outcome}}",
+          "expr": "sum by (endpoint, request, outcome) (rate(connector_hl_requests_total{namespace=\"$namespace\", outcome!=\"ok\"}[5m])) * 60"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "Every outcome other than ok, by request type. Empty is good."
+    },
+    {
+      "id": 65,
+      "type": "timeseries",
+      "title": "Connector routes p95",
+      "gridPos": {
+        "x": 16,
+        "y": 66,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{method}} {{route}}",
+          "expr": "histogram_quantile(0.95, sum by (le, method, route) (rate(connector_http_request_duration_seconds_bucket{namespace=\"$namespace\", route!=\"/health\"}[5m])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "description": "How long the connector takes to answer grid-static, per route. Compare with the Hyperliquid latency: the difference is the connector itself."
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Service health",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 75,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Scrape target",
       "description": "Is Prometheus reaching grid-static? The GridstaticDown alert fires after 5 minutes without it.",
-      "gridPos": { "x": 0, "y": 58, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "expr": "max(up{namespace=\"$namespace\", job=~\".+-grid-static\"}) or vector(0)" }],
-      "fieldConfig": { "defaults": {
-        "mappings": [{ "type": "value", "options": {
-          "0": { "text": "DOWN", "color": "red" }, "1": { "text": "up", "color": "green" } } }],
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
-      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "gridPos": {
+        "x": 0,
+        "y": 76,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(up{namespace=\"$namespace\", job=~\".+-grid-static\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 22, "type": "stat", "title": "Running build",
+      "id": 22,
+      "type": "stat",
+      "title": "Running build",
       "description": "The commit the running image was built from.",
-      "gridPos": { "x": 4, "y": 58, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{commit}}",
-        "expr": "max by (commit) (grid_build_info{namespace=\"$namespace\"})" }],
-      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "gridPos": {
+        "x": 4,
+        "y": 76,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{commit}}",
+          "expr": "max by (commit) (grid_build_info{namespace=\"$namespace\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 23, "type": "stat", "title": "Rounds that completed",
+      "id": 23,
+      "type": "stat",
+      "title": "Rounds that completed",
       "description": "Completed rounds / (completed + skipped or failed) over the time range: a simple SLO. A round is skipped when the exchange cannot be read.",
-      "gridPos": { "x": 8, "y": 58, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A",
-        "expr": "sum(increase(grid_round_duration_seconds_count{namespace=\"$namespace\"}[$__range])) / (sum(increase(grid_round_duration_seconds_count{namespace=\"$namespace\"}[$__range])) + (sum(increase(grid_errors_total{namespace=\"$namespace\", type=~\"read|round\"}[$__range])) or vector(0)))" }],
-      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2,
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "red", "value": null }, { "color": "orange", "value": 0.99 },
-          { "color": "green", "value": 0.999 } ] } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "gridPos": {
+        "x": 8,
+        "y": 76,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(grid_round_duration_seconds_count{namespace=\"$namespace\"}[$__range])) / (sum(increase(grid_round_duration_seconds_count{namespace=\"$namespace\"}[$__range])) + (sum(increase(grid_errors_total{namespace=\"$namespace\", type=~\"read|round\"}[$__range])) or vector(0)))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.99
+              },
+              {
+                "color": "green",
+                "value": 0.999
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 24, "type": "stat", "title": "Since the last round",
+      "id": 24,
+      "type": "stat",
+      "title": "Since the last round",
       "description": "Freshness: a bot can be up and still be stuck. A round runs every 30 seconds.",
-      "gridPos": { "x": 12, "y": 58, "w": 8, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "time() - max by (coin) (grid_last_round_timestamp_seconds{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0,
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "green", "value": null }, { "color": "orange", "value": 120 },
-          { "color": "red", "value": 300 } ] } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "gridPos": {
+        "x": 12,
+        "y": 76,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "time() - max by (coin) (grid_last_round_timestamp_seconds{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 25, "type": "stat", "title": "Pod restarts",
+      "id": 25,
+      "type": "stat",
+      "title": "Pod restarts",
       "description": "Container restarts in the namespace over the time range -- crashes, OOM kills, failed liveness probes. A deploy replaces the pod and does not count.",
-      "gridPos": { "x": 20, "y": 58, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A",
-        "expr": "round(sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[$__range]))) or vector(0)" }],
-      "fieldConfig": { "defaults": { "decimals": 0,
-        "color": { "mode": "thresholds" },
-        "thresholds": { "mode": "absolute", "steps": [
-          { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
-      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "gridPos": {
+        "x": 20,
+        "y": 76,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[$__range]))) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     },
     {
-      "id": 26, "type": "timeseries", "title": "Memory per container",
+      "id": 26,
+      "type": "timeseries",
+      "title": "Memory per container",
       "description": "Working set: what the kernel counts against the memory limit. The limit is 256Mi per container.",
-      "gridPos": { "x": 0, "y": 62, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{container}}",
-        "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"$namespace\", container!=\"\", container!=\"POD\"})" }],
-      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{container}}",
+          "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"$namespace\", container!=\"\", container!=\"POD\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     },
     {
-      "id": 27, "type": "timeseries", "title": "CPU per container",
+      "id": 27,
+      "type": "timeseries",
+      "title": "CPU per container",
       "description": "In cores. The limit is 0.2 per container.",
-      "gridPos": { "x": 8, "y": 62, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{container}}",
-        "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))" }],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
+      "gridPos": {
+        "x": 8,
+        "y": 80,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{container}}",
+          "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     },
     {
-      "id": 28, "type": "timeseries", "title": "Seconds since the last round",
-      "gridPos": { "x": 16, "y": 62, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
-        "expr": "time() - max by (coin) (grid_last_round_timestamp_seconds{namespace=\"$namespace\", coin=~\"$coin\"})" }],
-      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" } }
+      "id": 28,
+      "type": "timeseries",
+      "title": "Seconds since the last round",
+      "gridPos": {
+        "x": 16,
+        "y": 80,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{coin}}",
+          "expr": "time() - max by (coin) (grid_last_round_timestamp_seconds{namespace=\"$namespace\", coin=~\"$coin\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ]
 }

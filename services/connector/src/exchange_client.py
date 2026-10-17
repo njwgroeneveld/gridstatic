@@ -7,6 +7,8 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils.types import Cloid
 
+from src import metrics
+
 log = logging.getLogger(__name__)
 
 _TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
@@ -43,6 +45,8 @@ class ExchangeClient:
         self._info = Info(base_url, skip_ws=True, perp_dexs=self._dexes)
         self._exchange = Exchange(self._account, base_url, vault_address=wallet_address,
                                   perp_dexs=self._dexes)
+        metrics.instrument(self._info)
+        metrics.instrument(self._exchange)
         self._sz_cache: dict[str, int] = {}
 
     def get_sz_decimals(self, coin: str) -> int:

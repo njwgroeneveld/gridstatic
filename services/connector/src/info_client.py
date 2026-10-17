@@ -4,6 +4,8 @@ import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from src import metrics
+
 _SSL_VERIFY = os.getenv("SSL_VERIFY", "true").lower() != "false"
 if not _SSL_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -35,6 +37,10 @@ class InfoClient:
         self.session.mount("https://", HTTPAdapter(max_retries=retry))
 
     def _post(self, payload: dict):
+        return metrics.timed("info", metrics.request_type("/info", payload),
+                             lambda: self._send(payload))
+
+    def _send(self, payload: dict):
         try:
             resp = self.session.post(self.url, json=payload, timeout=self.timeout, verify=_SSL_VERIFY)
         except requests.exceptions.ConnectionError:
