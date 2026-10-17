@@ -28,8 +28,17 @@ grid_price_vs_upper = Gauge(
     "grid_price_vs_upper_pct", "Distance from current price to upper bound in %", ["coin"]
 )
 grid_round_duration = Histogram(
-    "grid_round_duration_seconds", "One read-decide-act round",
-    buckets=[0.1, 0.5, 1, 2, 5, 10]
+    "grid_round_duration_seconds", "One read-decide-act round of one grid",
+    ["coin"], buckets=[0.1, 0.5, 1, 2, 5, 10]
+)
+# The grid itself, so a dashboard can draw the price between its bounds.
+grid_mark_price = Gauge(
+    "grid_mark_price", "The mark price the grid decides from", ["coin"]
+)
+grid_lower_bound = Gauge("grid_lower_bound", "Lowest line of the grid", ["coin"])
+grid_upper_bound = Gauge("grid_upper_bound", "Highest line of the grid", ["coin"])
+grid_stop_loss_price = Gauge(
+    "grid_stop_loss_price", "Trigger price of the grid's stop; absent without one", ["coin"]
 )
 grid_on_hold = Gauge(
     "grid_on_hold", "1 while new buys are held back over an unexplained position", ["coin"]
@@ -73,5 +82,6 @@ grid_fees_usd = Counter(
     "grid_fees_usd", "Fees paid on this grid's fills", ["coin"]
 )
 grid_account_value_usd = Gauge(
-    "grid_account_value_usd", "Account value on the perp dex the grid trades on", ["dex"]
+    "grid_account_value_usd", "Account value on the perp dex the grid trades on. Grids "
+    "on the same dex share it: sum over dex, not over coin.", ["dex", "coin"]
 )

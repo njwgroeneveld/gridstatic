@@ -41,7 +41,7 @@ spec:
             runbook_url: "https://github.com/njwgroeneveld/gridstatic/blob/master/docs/operations.md#gridstaticdown"
         - alert: GridstaticHold
           # One alert per grid. A hold of a few rounds, right after a fill, is normal.
-          expr: max by (coin) (grid_on_hold{namespace="{{ .Release.Namespace }}"}) == 1
+          expr: max by (namespace, coin) (grid_on_hold{namespace="{{ .Release.Namespace }}"}) == 1
           for: 30m
           labels:
             severity: warning

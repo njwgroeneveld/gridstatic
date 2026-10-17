@@ -80,6 +80,10 @@ class StaticGrid:
         for counter in (metrics.grid_realized_gain_usd, metrics.grid_realized_loss_usd,
                         metrics.grid_fees_usd):
             counter.labels(coin=self.coin)
+        metrics.grid_lower_bound.labels(coin=self.coin).set(self.levels[0])
+        metrics.grid_upper_bound.labels(coin=self.coin).set(self.levels[-1])
+        if self.stop_loss is not None:
+            metrics.grid_stop_loss_price.labels(coin=self.coin).set(self.stop_loss)
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)
@@ -201,7 +205,7 @@ class StaticGrid:
         self.last_plan, self.last_price, self.last_position = p, price, position
         self._last_placed = placed
         self.last_round_ms = self._now_ms()
-        metrics.grid_round_duration.observe(time.time() - t0)
+        metrics.grid_round_duration.labels(coin=self.coin).observe(time.time() - t0)
         metrics.grid_last_round_timestamp.labels(coin=self.coin).set(self.last_round_ms / 1000)
         return p
 
@@ -345,7 +349,7 @@ class StaticGrid:
         except Exception:
             metrics.grid_errors_total.labels(type="account_value").inc()
             return
-        metrics.grid_account_value_usd.labels(dex=dex or "default").set(value)
+        metrics.grid_account_value_usd.labels(dex=dex or "default", coin=self.coin).set(value)
 
     async def _notice(self, msg: str, key: str | None = None) -> None:
         """An error alert, at most once an hour per kind."""
@@ -426,6 +430,7 @@ class StaticGrid:
     async def _report_price(self, price: float) -> None:
         lower, upper = self.levels[0], self.levels[-1]
         spacing = self.levels[1] - self.levels[0]
+        metrics.grid_mark_price.labels(coin=self.coin).set(price)
         metrics.grid_price_vs_lower.labels(coin=self.coin).set((price - lower) / lower * 100)
         metrics.grid_price_vs_upper.labels(coin=self.coin).set((upper - price) / upper * 100)
         for side, outside, near, bound in (("bottom", price < lower, price - lower < spacing, lower),

@@ -266,7 +266,11 @@ async def test_position_and_account_value_are_exported(config, connector, alerte
     assert _sample("grid_position", coin="xyz:XYZ100") == 0.5
     assert _sample("grid_position_value_usd", coin="xyz:XYZ100") == pytest.approx(77.5)
     assert _sample("grid_unrealized_pnl_usd", coin="xyz:XYZ100") == pytest.approx(2.5)
-    assert _sample("grid_account_value_usd", dex="xyz") == 99.5
+    assert _sample("grid_account_value_usd", dex="xyz", coin="xyz:XYZ100") == 99.5
+    # the grid itself, for the price-and-bounds panel
+    assert _sample("grid_mark_price", coin="xyz:XYZ100") == 155.0
+    assert (_sample("grid_lower_bound", coin="xyz:XYZ100"),
+            _sample("grid_upper_bound", coin="xyz:XYZ100")) == (100.0, 200.0)
 
 
 async def test_the_last_round_time_moves_only_with_a_complete_round(grid, connector, clock):
