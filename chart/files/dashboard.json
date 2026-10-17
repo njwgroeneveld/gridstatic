@@ -6,8 +6,30 @@
   "schemaVersion": 39,
   "refresh": "1m",
   "time": { "from": "now-7d", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1, "name": "Annotations & Alerts", "type": "dashboard", "enable": true,
+        "hide": true, "iconColor": "rgba(0, 211, 255, 1)",
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" }
+      },
+      {
+        "name": "Deploys", "enable": true, "iconColor": "purple",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "expr": "grid_build_info{namespace=\"$namespace\"} and on (pod) (changes(process_start_time_seconds{namespace=\"$namespace\"}[2m]) > 0)",
+        "step": "1m", "titleFormat": "grid-static started: {{commit}}", "textFormat": "{{pod}}",
+        "tagKeys": "commit"
+      }
+    ]
+  },
   "templating": {
     "list": [
+      {
+        "name": "namespace", "type": "query", "hide": 2,
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(grid_on_hold, namespace)", "refId": "namespace" },
+        "definition": "label_values(grid_on_hold, namespace)", "refresh": 2
+      },
       {
         "name": "datasource", "label": "Data source", "type": "datasource",
         "query": "prometheus", "current": {}, "hide": 0
@@ -204,6 +226,112 @@
         { "refId": "B", "legendFormat": "order {{coin}}",
           "expr": "histogram_quantile(0.95, sum by (le, coin) (rate(grid_order_placement_latency_seconds_bucket{coin=~\"$coin\"}[30m])))" }],
       "fieldConfig": { "defaults": { "unit": "s", "decimals": 2 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 20, "type": "row", "title": "Service health", "collapsed": false,
+      "gridPos": { "x": 0, "y": 36, "w": 24, "h": 1 }, "panels": []
+    },
+    {
+      "id": 21, "type": "stat", "title": "Scrape target",
+      "description": "Is Prometheus reaching grid-static? The GridstaticDown alert fires after 5 minutes without it.",
+      "gridPos": { "x": 0, "y": 37, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "expr": "max(up{namespace=\"$namespace\", job=~\".+-grid-static\"}) or vector(0)" }],
+      "fieldConfig": { "defaults": {
+        "mappings": [{ "type": "value", "options": {
+          "0": { "text": "DOWN", "color": "red" }, "1": { "text": "up", "color": "green" } } }],
+        "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 22, "type": "stat", "title": "Running build",
+      "description": "The commit the running image was built from.",
+      "gridPos": { "x": 4, "y": 37, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{commit}}",
+        "expr": "max by (commit) (grid_build_info{namespace=\"$namespace\"})" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 23, "type": "stat", "title": "Rounds that completed",
+      "description": "Completed rounds / (completed + skipped or failed) over the time range: a simple SLO. A round is skipped when the exchange cannot be read.",
+      "gridPos": { "x": 8, "y": 37, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A",
+        "expr": "sum(increase(grid_round_duration_seconds_count{namespace=\"$namespace\"}[$__range])) / (sum(increase(grid_round_duration_seconds_count{namespace=\"$namespace\"}[$__range])) + (sum(increase(grid_errors_total{namespace=\"$namespace\", type=~\"read|round\"}[$__range])) or vector(0)))" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2,
+        "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null }, { "color": "orange", "value": 0.99 },
+          { "color": "green", "value": 0.999 } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 24, "type": "stat", "title": "Since the last round",
+      "description": "Freshness: a bot can be up and still be stuck. A round runs every 30 seconds.",
+      "gridPos": { "x": 12, "y": 37, "w": 8, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
+        "expr": "time() - max by (coin) (grid_last_round_timestamp_seconds{namespace=\"$namespace\", coin=~\"$coin\"})" }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0,
+        "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "orange", "value": 120 },
+          { "color": "red", "value": 300 } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 25, "type": "stat", "title": "Pod restarts",
+      "description": "Container restarts in the namespace over the time range -- crashes, OOM kills, failed liveness probes. A deploy replaces the pod and does not count.",
+      "gridPos": { "x": 20, "y": 37, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A",
+        "expr": "round(sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[$__range]))) or vector(0)" }],
+      "fieldConfig": { "defaults": { "decimals": 0,
+        "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 26, "type": "timeseries", "title": "Memory per container",
+      "description": "Working set: what the kernel counts against the memory limit. The limit is 256Mi per container.",
+      "gridPos": { "x": 0, "y": 41, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{container}}",
+        "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"$namespace\", container!=\"\", container!=\"POD\"})" }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 27, "type": "timeseries", "title": "CPU per container",
+      "description": "In cores. The limit is 0.2 per container.",
+      "gridPos": { "x": 8, "y": 41, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{container}}",
+        "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"$namespace\", container!=\"\", container!=\"POD\"}[5m]))" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 28, "type": "timeseries", "title": "Seconds since the last round",
+      "gridPos": { "x": 16, "y": 41, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{coin}}",
+        "expr": "time() - max by (coin) (grid_last_round_timestamp_seconds{namespace=\"$namespace\", coin=~\"$coin\"})" }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" } }
     }

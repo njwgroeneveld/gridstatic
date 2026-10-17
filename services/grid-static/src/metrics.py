@@ -39,6 +39,15 @@ grid_order_placement_latency = Histogram(
     ["coin"], buckets=[0.1, 0.25, 0.5, 1, 2.5, 5]
 )
 
+# ── Is the bot healthy ────────────────────────────────────────────────────────
+grid_build_info = Gauge(
+    "grid_build_info", "Always 1; the commit the image was built from", ["commit"]
+)
+grid_last_round_timestamp = Gauge(
+    "grid_last_round_timestamp_seconds",
+    "When the last complete round ended. A bot can be up and still be stuck.", ["coin"]
+)
+
 # ── What the exchange says, read every round ──────────────────────────────────
 # The P&L above is the bot's own view of completed cycles and starts at zero on
 # every restart. These come from the exchange: the realised ones are counters,

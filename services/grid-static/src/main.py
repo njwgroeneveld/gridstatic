@@ -10,6 +10,7 @@ from prometheus_client import make_asgi_app
 
 from shared.connector_client import ConnectorClient
 from shared.alerter_client import AlerterClient
+from src import metrics
 from src.grid_math import calculate_size_usd
 from src.strategy import MIN_NOTIONAL, StaticGrid
 
@@ -134,6 +135,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="grid-static", lifespan=lifespan)
 app.mount("/metrics", make_asgi_app())
+# GIT_COMMIT is a build argument of the image; see the Dockerfile.
+metrics.grid_build_info.labels(commit=os.getenv("GIT_COMMIT", "unknown")[:7]).set(1)
 
 
 @app.middleware("http")

@@ -202,6 +202,7 @@ class StaticGrid:
         self._last_placed = placed
         self.last_round_ms = self._now_ms()
         metrics.grid_round_duration.observe(time.time() - t0)
+        metrics.grid_last_round_timestamp.labels(coin=self.coin).set(self.last_round_ms / 1000)
         return p
 
     def _vanished(self, orders: list[dict], fills: list[dict]) -> str | None:

@@ -42,6 +42,8 @@ jobs:
           context: services/grid-static
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/gridstatic-grid-static:latest
             ghcr.io/${{ github.repository_owner }}/gridstatic-grid-static:${{ github.sha }}

@@ -269,6 +269,16 @@ async def test_position_and_account_value_are_exported(config, connector, alerte
     assert _sample("grid_account_value_usd", dex="xyz") == 99.5
 
 
+async def test_the_last_round_time_moves_only_with_a_complete_round(grid, connector, clock):
+    await grid.start()
+    await grid.run_round()
+    assert _sample("grid_last_round_timestamp_seconds", coin="BTC") == START_MS / 1000
+    clock.ms += 30_000
+    connector.get_open_orders.side_effect = RuntimeError("exchange down")
+    await grid.run_round()
+    assert _sample("grid_last_round_timestamp_seconds", coin="BTC") == START_MS / 1000
+
+
 async def test_an_unreadable_account_value_does_not_stop_the_round(grid, connector):
     await grid.start()
     connector.get_account_value.side_effect = RuntimeError("down")
