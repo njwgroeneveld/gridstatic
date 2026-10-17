@@ -90,6 +90,13 @@ monitoring:
     # The label the Grafana sidecar looks for; this is kube-prometheus-stack's default.
     labels:
       grafana_dashboard: "1"
+  # Alerts, evaluated by Prometheus and sent by Alertmanager -- independent of the
+  # bot, so they also fire when the bot itself is down. Needs serviceMonitor.
+  prometheusRule:
+    enabled: false
+    # Labels your Prometheus selects rules by (`ruleSelector`); often the same
+    # `release: <name>` as for the ServiceMonitor.
+    labels: {}
 
 scheduling:
   # Empty: the scheduler picks a node. The images are built for amd64 and arm64.

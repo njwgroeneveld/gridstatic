@@ -15,6 +15,31 @@ spec:
       path: /metrics/
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
 {{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-alerts
+  {{- with .Values.monitoring.prometheusRule.labels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    - name: gridstatic
+      rules:
+        - alert: GridstaticDown
+          # absent(), not up == 0: a pod that is gone takes its scrape target
+          # with it, and then there is no `up` series left to be 0.
+          expr: absent(up{namespace="{{ .Release.Namespace }}", job="{{ .Release.Name }}-grid-static"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "gridstatic is down in {{ .Release.Namespace }}"
+            description: "No healthy grid-static target for 5 minutes. No round runs: no new sells and no buys. The stops on the exchange still protect the positions."
+            runbook_url: "https://github.com/njwgroeneveld/gridstatic/blob/master/docs/operations.md#gridstaticdown"
+{{- end }}
 {{- if .Values.monitoring.grafanaDashboard.enabled }}
 ---
 apiVersion: v1

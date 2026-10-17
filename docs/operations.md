@@ -418,6 +418,25 @@ fills, errors and latency. Without the operator, import `chart/files/dashboard.j
 The realised counters count each fill once, from the moment the pod starts. Fills that happen
 while the pod is down are not counted.
 
+### Alerts
+
+`monitoring.prometheusRule.enabled: true` adds alert rules. Prometheus evaluates them and
+Alertmanager sends them wherever you route alerts — so unlike the Telegram messages the bot sends
+itself, they also arrive when the bot is down.
+
+#### GridstaticDown
+
+No healthy grid-static target for 5 minutes. No round runs, so nothing is bought or sold; the
+stops on the exchange still protect the positions.
+
+1. `kubectl -n gridstatic get pods` — is the pod there? `0/1`, `CrashLoopBackOff`, `Pending`?
+2. `kubectl -n gridstatic describe pod -l app=gridstatic-grid-static` — the events say why it
+   does not start: an image that cannot be pulled, a node that is gone, an OOM kill.
+3. `kubectl -n gridstatic logs deploy/gridstatic-grid-static --previous` — the last words of a
+   crashed pod. "Refusing to start" means a configuration error; the message names it.
+4. Pod running but the alert still fires? Then Prometheus cannot reach it: check that the
+   ServiceMonitor still selects the Service (`kubectl -n gridstatic get endpoints`).
+
 ---
 
 ## Telegram alerts (optional)
