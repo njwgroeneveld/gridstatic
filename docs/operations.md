@@ -437,6 +437,16 @@ stops on the exchange still protect the positions.
 4. Pod running but the alert still fires? Then Prometheus cannot reach it: check that the
    ServiceMonitor still selects the Service (`kubectl -n gridstatic get endpoints`).
 
+#### GridstaticHold
+
+A grid has placed no new buys for 30 minutes because its position does not add up. Sells and the
+stop still go out.
+
+1. Find the reason: `kubectl -n gridstatic logs deploy/gridstatic-grid-static | grep "on hold"`,
+   or the `hold` field in `/status`.
+2. Look it up in [When the grid holds](#when-the-grid-holds) — every reason there has its fix.
+3. `tools/gridcheck.py` shows, cell by cell, what the bot sees and what it would do next.
+
 ---
 
 ## Telegram alerts (optional)
