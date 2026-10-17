@@ -52,14 +52,14 @@ def test_get_open_orders_raises_instead_of_reporting_an_empty_book():
 
 def test_get_fills_since_raises_instead_of_reporting_no_fills():
     client = _make_client()
-    client._info.user_fills.side_effect = RuntimeError("API down")
+    client._info.user_fills_by_time.side_effect = RuntimeError("API down")
     with pytest.raises(RuntimeError):
         client.get_fills_since("BTC", since_ms=0)
 
 
 def test_get_fills_since_filters_by_coin_and_time():
     client = _make_client()
-    client._info.user_fills.return_value = [
+    client._info.user_fills_by_time.return_value = [
         {"coin": "BTC", "time": 1000, "oid": 1},
         {"coin": "BTC", "time": 500,  "oid": 2},
         {"coin": "ETH", "time": 2000, "oid": 3},
@@ -67,6 +67,28 @@ def test_get_fills_since_filters_by_coin_and_time():
     result = client.get_fills_since("BTC", since_ms=600)
     assert len(result) == 1
     assert result[0]["oid"] == 1
+
+
+def test_fills_are_asked_from_the_start_time_not_the_whole_history():
+    client = _make_client()
+    client._info.user_fills_by_time.return_value = []
+    client.get_fills_since("BTC", since_ms=1_800_000_000_000)
+    client._info.user_fills_by_time.assert_called_once_with("0xTEST", 1_800_000_000_000)
+    client._info.user_fills.assert_not_called()
+
+
+def test_a_full_page_of_fills_is_followed_by_the_next():
+    # Oldest first, at most 2000 an answer: without the next page the newest
+    # fills -- the ones the grid needs -- would be missing.
+    client = _make_client()
+    first = [{"coin": "BTC", "time": 1000 + i, "tid": i, "oid": i} for i in range(2000)]
+    second = [first[-1],                                   # the page boundary, again
+              {"coin": "BTC", "time": 5000, "tid": 9999, "oid": 9999}]
+    client._info.user_fills_by_time.side_effect = [first, second]
+    fills = client.get_fills_since("BTC", since_ms=0)
+    assert len(fills) == 2001                              # the boundary fill only once
+    assert fills[-1]["tid"] == 9999
+    assert client._info.user_fills_by_time.call_args_list[1].args == ("0xTEST", 2999)
 
 
 def test_cancel_order_returns_ok():

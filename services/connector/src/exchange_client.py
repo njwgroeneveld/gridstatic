@@ -11,6 +11,9 @@ from src import metrics
 
 log = logging.getLogger(__name__)
 
+_FILL_PAGE_SIZE = 2000      # the most userFillsByTime sends in one answer
+_FILL_PAGES = 10
+
 _TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 _MAINNET_URL = "https://api.hyperliquid.xyz"
 
@@ -108,10 +111,29 @@ class ExchangeClient:
     def get_fills_since(self, coin: str, since_ms: int) -> list[dict]:
         """Raises for the same reason: the caller advances a watermark on the
         strength of this answer, so an empty list has to mean there were no
-        fills -- never that we failed to ask."""
-        fills = self._info.user_fills(self._wallet_address)
-        return [f for f in (fills or [])
-                if f.get("coin") == coin and f.get("time", 0) >= since_ms]
+        fills -- never that we failed to ask.
+
+        userFillsByTime, not userFills: the latter sends the account's whole
+        history every time, to be thrown away but for the last few days, and
+        it grows with every trade. By time, Hyperliquid sends at most a page of
+        fills, oldest first -- so a full page means there are more, and the
+        newest are the ones the grid needs most."""
+        fills: dict = {}
+        start = since_ms
+        for _ in range(_FILL_PAGES):
+            page = self._info.user_fills_by_time(self._wallet_address, start) or []
+            for f in page:
+                # Pages meet at a millisecond that may hold fills on both sides.
+                fills[f.get("tid") or (f.get("oid"), f.get("time"), f.get("sz"), f.get("px"))] = f
+            if len(page) < _FILL_PAGE_SIZE:
+                break
+            start = max(int(f.get("time", 0)) for f in page)
+        else:
+            log.warning(f"more than {_FILL_PAGES} pages of fills since {since_ms}; the "
+                        f"newest may be missing, and the grid holds rather than guess")
+        return sorted((f for f in fills.values()
+                       if f.get("coin") == coin and f.get("time", 0) >= since_ms),
+                      key=lambda f: f.get("time", 0))
 
     def get_funding_since(self, since_ms: int) -> list[dict]:
         """Funding is charged per hour on the net position and cannot be derived
