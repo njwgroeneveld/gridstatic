@@ -169,10 +169,19 @@ class StaticGrid:
     async def run_round(self) -> Plan | None:
         t0 = time.time()
         try:
-            orders = await self.connector.get_open_orders(self.coin)
-            positions = await self.connector.get_positions(dex=dex_of(self.coin))
-            price = await self.connector.get_price(self.coin)
-            fills = await self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms)
+            # Two phases, not four reads at once. The book has to be read before
+            # the position and the fills: a buy that fills in between is then
+            # either still on the book or in the fills. Read the other way round,
+            # it can be gone from the book and not yet in the fills -- an empty
+            # cell, and a second buy on it. Position and fills may run together:
+            # if they miss each other the position does not add up, and that
+            # holds one round instead of buying twice.
+            orders, price = await asyncio.gather(
+                self.connector.get_open_orders(self.coin),
+                self.connector.get_price(self.coin))
+            positions, fills = await asyncio.gather(
+                self.connector.get_positions(dex=dex_of(self.coin)),
+                self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms))
         except Exception as e:
             # An exchange that cannot be read is never an empty exchange: act on
             # nothing until it answers again.

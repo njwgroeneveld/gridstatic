@@ -116,12 +116,19 @@ trades for does exactly that.
 ### One round
 
 ```
-read open orders, position, price, fills  ── any read fails → do nothing this round
+read open orders and price, together      ── any read fails → do nothing this round
+then position and fills, together         ── never before the book: see below
 tie fills to cells through their cloid
 reconcile → cancels, sells, buys, hold
 cancel; then sells; then buys
 report fills, closed cycles, hold changes
 ```
+
+The order of the reads carries a rule. A buy that fills during the round has to be seen
+somewhere: still on the book, or in the fills. Reading the book first guarantees that. Reading the
+fills or the position before it can catch the buy gone from the book and not yet in the fills —
+an empty cell, and a second buy on it. Position and fills may be read together: when they miss
+each other the position does not add up, and that costs one round on hold, not a double buy.
 
 `reconcile` has no I/O and no memory. It is where every decision is made, and it is tested on
 its own, case by case. Each safety rule was mutated away once to confirm a test fails without it.

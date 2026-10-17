@@ -283,6 +283,42 @@ async def test_the_last_round_time_moves_only_with_a_complete_round(grid, connec
     assert _sample("grid_last_round_timestamp_seconds", coin="BTC") == START_MS / 1000
 
 
+async def test_position_and_fills_are_read_only_after_the_book(grid, connector):
+    # Read before the book, a buy that fills in between can be gone from the
+    # book and not yet in the fills: an empty cell, and a second buy on it.
+    events = []
+
+    async def slow_orders(coin):
+        events.append("orders asked")
+        await asyncio.sleep(0.05)
+        events.append("orders answered")
+        return []
+
+    async def positions(dex=None):
+        events.append("positions asked")
+        return {}
+
+    async def fills(coin, since_ms):
+        events.append("fills asked")
+        return []
+
+    await grid.start()
+    connector.get_open_orders.side_effect = slow_orders
+    connector.get_positions.side_effect = positions
+    connector.get_fills.side_effect = fills
+    await grid.run_round()
+    answered = events.index("orders answered")
+    assert events.index("positions asked") > answered
+    assert events.index("fills asked") > answered
+
+
+async def test_one_failed_read_skips_the_whole_round(grid, connector):
+    await grid.start()
+    connector.get_fills.side_effect = RuntimeError("down")
+    assert await grid.run_round() is None
+    connector.place_limit.assert_not_called()
+
+
 async def test_a_round_reads_the_position_of_its_own_dex_only(config, connector, alerter, clock):
     from src.strategy import StaticGrid
     for coin, dex in (("BTC", ""), ("xyz:XYZ100", "xyz")):
