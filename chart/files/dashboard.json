@@ -1172,8 +1172,8 @@
       "targets": [
         {
           "refId": "A",
-          "legendFormat": "{{endpoint}} {{request}}",
-          "expr": "histogram_quantile(0.95, sum by (le, endpoint, request) (rate(connector_hl_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])))"
+          "legendFormat": "{{api}} {{request}}",
+          "expr": "histogram_quantile(0.95, sum by (le, api, request) (rate(connector_hl_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])))"
         }
       ],
       "fieldConfig": {
@@ -1215,9 +1215,9 @@
       "targets": [
         {
           "refId": "A",
-          "legendFormat": "{{endpoint}} {{request}}",
+          "legendFormat": "{{api}} {{request}}",
           "instant": true,
-          "expr": "sort_desc(sum by (endpoint, request) (rate(connector_hl_request_duration_seconds_sum{namespace=\"$namespace\"}[5m])) * 60)"
+          "expr": "sort_desc(sum by (api, request) (rate(connector_hl_request_duration_seconds_sum{namespace=\"$namespace\"}[5m])) * 60)"
         }
       ],
       "fieldConfig": {
@@ -1305,8 +1305,8 @@
       "targets": [
         {
           "refId": "A",
-          "legendFormat": "{{endpoint}} {{request}}: {{outcome}}",
-          "expr": "sum by (endpoint, request, outcome) (rate(connector_hl_requests_total{namespace=\"$namespace\", outcome!=\"ok\"}[5m])) * 60"
+          "legendFormat": "{{api}} {{request}}: {{outcome}}",
+          "expr": "sum by (api, request, outcome) (rate(connector_hl_requests_total{namespace=\"$namespace\", outcome!=\"ok\"}[5m])) * 60"
         }
       ],
       "fieldConfig": {

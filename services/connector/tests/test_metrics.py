@@ -9,16 +9,16 @@ from prometheus_client import REGISTRY
 from src import metrics
 
 
-def _count(endpoint, request, outcome):
+def _count(api, request, outcome):
     return REGISTRY.get_sample_value(
         "connector_hl_requests_total",
-        {"endpoint": endpoint, "request": request, "outcome": outcome}) or 0.0
+        {"api": api, "request": request, "outcome": outcome}) or 0.0
 
 
-def _timed(endpoint, request):
+def _timed(api, request):
     return REGISTRY.get_sample_value(
         "connector_hl_request_duration_seconds_count",
-        {"endpoint": endpoint, "request": request}) or 0.0
+        {"api": api, "request": request}) or 0.0
 
 
 class FakeApi:

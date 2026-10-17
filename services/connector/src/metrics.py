@@ -13,15 +13,19 @@ from prometheus_client import Counter, Histogram
 
 _BUCKETS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10]
 
+# "api" (info or exchange), not "endpoint": the Prometheus Operator puts an
+# `endpoint` label on every series it scrapes, the name of the Service port,
+# and that one wins -- ours would arrive as exported_endpoint.
+
 hl_request_duration = Histogram(
     "connector_hl_request_duration_seconds",
-    "One request to Hyperliquid, retries included", ["endpoint", "request"], buckets=_BUCKETS
+    "One request to Hyperliquid, retries included", ["api", "request"], buckets=_BUCKETS
 )
 hl_requests = Counter(
     "connector_hl_requests",
     "Requests to Hyperliquid by outcome: ok, rejected (answered, but the exchange "
     "refused), rate_limited, http_4xx, http_5xx, timeout, connection or error",
-    ["endpoint", "request", "outcome"]
+    ["api", "request", "outcome"]
 )
 http_request_duration = Histogram(
     "connector_http_request_duration_seconds",
@@ -65,17 +69,17 @@ def _rejected(result) -> bool:
     return any(isinstance(s, dict) and "error" in s for s in statuses)
 
 
-def timed(endpoint: str, request: str, call):
+def timed(api: str, request: str, call):
     t0 = time.perf_counter()
     try:
         result = call()
     except Exception as e:
-        hl_requests.labels(endpoint, request, _outcome_of(e)).inc()
+        hl_requests.labels(api, request, _outcome_of(e)).inc()
         raise
     finally:
-        hl_request_duration.labels(endpoint, request).observe(time.perf_counter() - t0)
-    outcome = "rejected" if endpoint == "exchange" and _rejected(result) else "ok"
-    hl_requests.labels(endpoint, request, outcome).inc()
+        hl_request_duration.labels(api, request).observe(time.perf_counter() - t0)
+    outcome = "rejected" if api == "exchange" and _rejected(result) else "ok"
+    hl_requests.labels(api, request, outcome).inc()
     return result
 
 

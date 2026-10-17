@@ -413,8 +413,8 @@ fills, errors and latency. Without the operator, import `chart/files/dashboard.j
 | `grid_position`, `grid_position_value_usd`, `grid_unrealized_pnl_usd` | the position as the exchange reports it, valued at the mark price |
 | `grid_account_value_usd{dex}` | the balance the grid's orders draw on |
 | `grid_on_hold` | 1 while new buys are held back — see [When the grid holds](#when-the-grid-holds) |
-| `connector_hl_request_duration_seconds{endpoint, request}` | how long Hyperliquid takes per request type (`userFills`, `frontendOpenOrders`, `order`, …), measured in the connector where it goes over the network |
-| `connector_hl_requests_total{endpoint, request, outcome}` | the same requests by outcome: `ok`, `rejected` (answered but refused), `rate_limited`, `http_4xx`, `http_5xx`, `timeout`, `connection` |
+| `connector_hl_request_duration_seconds{api, request}` | how long Hyperliquid takes per request type (`userFills`, `frontendOpenOrders`, `order`, …), measured in the connector where it goes over the network |
+| `connector_hl_requests_total{api, request, outcome}` | the same requests by outcome: `ok`, `rejected` (answered but refused), `rate_limited`, `http_4xx`, `http_5xx`, `timeout`, `connection` |
 | `connector_http_request_duration_seconds{route}` | how long the connector takes to answer grid-static; the difference with the above is the connector itself |
 | `grid_profit_usd` | the bot's own view of completed buy→sell cycles. It starts at zero on every restart and leaves out stop-outs; use the realised counters above for P&L. |
 
