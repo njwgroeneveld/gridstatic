@@ -22,8 +22,10 @@ the `namespace` and `release` lines first.
 ```bash
 kubectl apply -f monitoring/servicemonitors.yaml -f monitoring/alerts.yaml
 
-# The dashboard, for Grafana's sidecar (kube-prometheus-stack looks for this label) ...
-kubectl -n gridstatic create configmap gridstatic-dashboard --from-file=monitoring/dashboard.json
+# The dashboard, for Grafana's sidecar (kube-prometheus-stack looks for this label). The key is
+# the file name the sidecar writes, shared with every other dashboard: keep it distinct.
+kubectl -n gridstatic create configmap gridstatic-dashboard \
+  --from-file=gridstatic.json=monitoring/dashboard.json
 kubectl -n gridstatic label configmap gridstatic-dashboard grafana_dashboard=1
 # ... or import monitoring/dashboard.json by hand: Dashboards → New → Import.
 ```
