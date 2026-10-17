@@ -283,6 +283,30 @@ async def test_the_last_round_time_moves_only_with_a_complete_round(grid, connec
     assert _sample("grid_last_round_timestamp_seconds", coin="BTC") == START_MS / 1000
 
 
+async def test_a_round_reads_the_position_of_its_own_dex_only(config, connector, alerter, clock):
+    from src.strategy import StaticGrid
+    for coin, dex in (("BTC", ""), ("xyz:XYZ100", "xyz")):
+        config["coin"] = coin
+        g = StaticGrid("G", dict(config), strategy_allocation_pct=100, start_balance=550,
+                       connector=connector, alerter=alerter, clock=clock)
+        await g.start()
+        connector.get_positions.reset_mock()
+        await g.run_round()
+        connector.get_positions.assert_awaited_once_with(dex=dex)
+
+
+async def test_the_account_value_is_read_at_most_every_five_minutes(grid, connector, clock):
+    await grid.start()
+    connector.get_account_value.reset_mock()
+    await grid.run_round()                         # the first round reads it
+    clock.ms += 30_000
+    await grid.run_round()                         # 30 seconds later: not again
+    assert connector.get_account_value.await_count == 1
+    clock.ms += 5 * 60 * 1000
+    await grid.run_round()
+    assert connector.get_account_value.await_count == 2
+
+
 async def test_an_unreadable_account_value_does_not_stop_the_round(grid, connector):
     await grid.start()
     connector.get_account_value.side_effect = RuntimeError("down")

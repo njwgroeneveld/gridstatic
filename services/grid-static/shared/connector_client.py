@@ -28,8 +28,11 @@ class ConnectorClient:
         """The mark price: on a thin book the mid moves with the grid's own orders."""
         return float((await self._get(f"/price/{coin}"))["mark_px"])
 
-    async def get_positions(self) -> dict[str, dict]:
-        return await self._get("/positions")
+    async def get_positions(self, dex: str | None = None) -> dict[str, dict]:
+        """dex None: every dex. "" is the default dex, "xyz" a HIP-3 one."""
+        if dex is None:
+            return await self._get("/positions")
+        return await self._get("/positions", dex=dex)
 
     async def get_open_orders(self, coin: str) -> list[dict]:
         return await self._get(f"/orders/{coin}")

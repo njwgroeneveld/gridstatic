@@ -273,6 +273,33 @@ def test_an_unreadable_dex_is_never_an_empty_position():
         client.get_open_positions()
 
 
+@pytest.mark.parametrize("dex, coin", [("xyz", "xyz:XYZ100"), ("", "BTC")])
+def test_positions_of_one_dex_read_only_that_dex(dex, coin):
+    client = _hip3_client()
+    states = {
+        "": {"assetPositions": [{"position": {"coin": "BTC", "szi": "0.01", "entryPx": "1"}}]},
+        "xyz": {"assetPositions": [{"position": {"coin": "xyz:XYZ100", "szi": "0.002",
+                                                 "entryPx": "30000"}}]},
+    }
+    client._info.user_state.side_effect = lambda addr, dex="": states[dex]
+    assert list(client.get_open_positions(dex)) == [coin]
+    client._info.user_state.assert_called_once_with("0xTEST", dex=dex)
+
+
+def test_a_dex_that_is_down_does_not_stop_the_positions_of_another():
+    client = _hip3_client()
+
+    def state(addr, dex=""):
+        if dex == "xyz":
+            raise ConnectionError("down")
+        return {"assetPositions": [{"position": {"coin": "BTC", "szi": "0.01", "entryPx": "1"}}]}
+
+    client._info.user_state.side_effect = state
+    assert "BTC" in client.get_open_positions("")
+    with pytest.raises(ConnectionError):
+        client.get_open_positions("xyz")
+
+
 def test_lot_size_of_a_hip3_coin_comes_from_its_dex():
     client = _hip3_client()
     client._info.meta.side_effect = lambda dex="": {

@@ -120,10 +120,11 @@ def get_price(coin: str):
 
 
 @app.get("/positions")
-def get_positions():
-    # An unreadable position must never look like "no position".
+def get_positions(dex: str | None = Query(None)):
+    # An unreadable position must never look like "no position". Without dex:
+    # every dex, as before -- an older grid-static that does not send it still works.
     try:
-        return _ex().get_open_positions()
+        return _ex().get_open_positions(dex)
     except HTTPException:
         raise
     except Exception as e:

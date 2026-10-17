@@ -79,11 +79,14 @@ class ExchangeClient:
         perps_value = float(state.get("marginSummary", {}).get("accountValue", 0.0))
         return (usdc_total - usdc_hold) + perps_value
 
-    def get_open_positions(self) -> dict[str, dict]:
-        """Positions on every dex this client knows, under their full name. Any dex
-        that cannot be read raises: an unreadable position is never a flat one."""
+    def get_open_positions(self, dex: str | None = None) -> dict[str, dict]:
+        """Positions under their full name: on one dex, or on every dex this client
+        knows when dex is None. Any dex that cannot be read raises: an unreadable
+        position is never a flat one. A grid asks for its own dex only -- one
+        read instead of one per dex, and a dex that is down no longer stops the
+        grids on the others."""
         result = {}
-        for dex in self._dexes:
+        for dex in (self._dexes if dex is None else [dex]):
             state = self._info.user_state(self._wallet_address, dex=dex)
             for pos in state.get("assetPositions", []):
                 p = pos.get("position", {})

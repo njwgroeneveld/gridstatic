@@ -25,6 +25,7 @@ _LOOKUPS_PER_ROUND = 50             # order-status calls to tie fills to cells
 _REPEAT_MS = 60 * 60 * 1000         # a standing hold or notice is repeated hourly
 _DAY_MS = 24 * 60 * 60 * 1000
 _UNREADABLE_ALERT_AFTER = 3          # failed rounds in a row before an alert
+_ACCOUNT_VALUE_EVERY_MS = 5 * 60 * 1000   # the dashboard's account value
 
 
 def dex_of(coin: str) -> str:
@@ -60,6 +61,7 @@ class StaticGrid:
         self._started_ms = self._now_ms()
         self._announced: dict[int, int] = {}    # oid -> fill time, see _announce_fills
         self._counted: dict[str, int] = {}      # fill id -> fill time, see _report_exchange
+        self._account_value_read_ms = -_ACCOUNT_VALUE_EVERY_MS   # the first round reads it
         self._hold: str | None = None
         self._hold_alerted_ms = 0
         self._notice_alerted_ms: dict[str, int] = {}
@@ -168,7 +170,7 @@ class StaticGrid:
         t0 = time.time()
         try:
             orders = await self.connector.get_open_orders(self.coin)
-            positions = await self.connector.get_positions()
+            positions = await self.connector.get_positions(dex=dex_of(self.coin))
             price = await self.connector.get_price(self.coin)
             fills = await self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms)
         except Exception as e:
@@ -343,12 +345,18 @@ class StaticGrid:
         for key in [k for k, t in self._counted.items() if t < horizon]:
             del self._counted[key]
 
+        # Only for the dashboard, and an account value moves slowly: reading it
+        # every round cost two exchange requests per round for nothing.
+        now = self._now_ms()
+        if now - self._account_value_read_ms < _ACCOUNT_VALUE_EVERY_MS:
+            return
         dex = dex_of(self.coin)
         try:
             value = await self.connector.get_account_value(dex=dex)
         except Exception:
             metrics.grid_errors_total.labels(type="account_value").inc()
             return
+        self._account_value_read_ms = now
         metrics.grid_account_value_usd.labels(dex=dex or "default", coin=self.coin).set(value)
 
     async def _notice(self, msg: str, key: str | None = None) -> None:
