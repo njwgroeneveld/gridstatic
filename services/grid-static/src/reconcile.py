@@ -140,12 +140,16 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
     for f in fills:
         if f.side == SELL and f.time > last_sell_fill.get(f.cell, -1):
             last_sell_fill[f.cell] = f.time
+    # The stop sells the whole position, so it ends what every cell held. Without
+    # this, a buy from before the stop comes back as unsold coin as soon as the
+    # grid buys again and the position is no longer flat.
+    last_stop_fill = max((f.time for f in fills if f.side == STOP), default=-1)
     unsold: dict[int, float] = defaultdict(float)
     for f in fills:
         if f.side != BUY:
             continue
         since = _ts(sell[f.cell]) if f.cell in sell else last_sell_fill.get(f.cell, -1)
-        if f.time > since:
+        if f.time > max(since, last_stop_fill):
             unsold[f.cell] += f.sz
 
     # A flat position means no cell holds coin, whatever the fills say: a stop
@@ -171,8 +175,8 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
         out.hold = (f"position {position} has {out.residual:.6g} that no cell accounts for "
                     f"(resting sells {covered:.6g}, unsold {sum(unsold.values()):.6g})")
     elif out.residual < -tol:
-        out.hold = (f"resting sells of {covered:.6g} exceed what the position "
-                    f"{position} can cover")
+        out.hold = (f"resting sells of {covered:.6g} and unsold {sum(unsold.values()):.6g} "
+                    f"exceed what the position {position} can cover")
     elif forced_hold:
         out.hold = forced_hold
 

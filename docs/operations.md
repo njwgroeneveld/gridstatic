@@ -326,7 +326,7 @@ and a `hold_cleared` alert when it resumes. `/status` shows it too.
 |---|---|
 | the position has coin no cell accounts for | a manual position, another bot on the coin, or fills older than `fillLookbackHours`. Close the extra position, or sell it yourself. |
 | orders from an earlier grid on this coin | you changed the grid's bounds, lines or leverage. Cancel the old orders, or restore the old settings. |
-| resting sells exceed the position | someone sold coin the bot had a sell for. Cancel the excess sell. |
+| resting sells and unsold coin exceed the position | someone sold coin the bot had a sell for, or closed the position by hand. Cancel the excess sell; unsold coin without a sell clears once its buy is older than `fillLookbackHours`. |
 | none of the orders placed last round is on the book or filled | the bot reads another account than it trades on. Check `wallet_address` — see [Which key](#which-key). |
 | short position | a grid only ever holds long. Close the short. |
 

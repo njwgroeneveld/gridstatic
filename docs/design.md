@@ -86,7 +86,8 @@ belong to an earlier grid: the bot does not touch them, and holds until they are
 ### What a cell holds
 
 The rule that carries the design: **a cell's unsold coin is what it bought after its current
-sell was placed** — or, without a resting sell, after its last sell fill.
+sell was placed** — or, without a resting sell, after its last sell fill. A stop fill ends what
+every cell held, since the stop sells the whole position.
 
 It works because the bot sizes every sell to cover everything the cell holds at that moment.
 Anything bought later has no exit yet. That one rule covers a partial fill, a buy that filled
@@ -101,7 +102,7 @@ lot. Before the bot places any new buy, it has to be:
 | | grid holds — no new buys |
 |---|---|
 | residual > 0 | coin no cell accounts for: a manual position, another bot, fills older than the look-back |
-| residual < 0 | resting sells exceed the position |
+| residual < 0 | resting sells and unsold coin exceed the position |
 | orders with another fingerprint | an earlier grid on this coin |
 | short position | a grid only ever holds long |
 | none of last round's orders on the book or filled | the bot reads another account than it trades on |

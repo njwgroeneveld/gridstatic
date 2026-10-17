@@ -293,6 +293,19 @@ def test_a_flat_position_ignores_unsold_coin_from_the_fills():
     assert not sells(p) and p.hold is None and 3 in buys(p)
 
 
+def test_buys_before_a_stop_fill_are_not_unsold_coin():
+    # The BTC grid on 2026-10-15: cell 0 bought, the stop closed everything, and
+    # cell 0 bought again. The buy from before the stop is gone with the stop; it
+    # must not be counted next to the new one once the position is no longer flat.
+    p = run(orders=resting_buys(1, 2, 4, 5),
+            fills=[fill(0, BUY, 0.5, t=1000), fill(3, BUY, 0.38, t=1100),
+                   fill(0, STOP, 0.88, t=2000), fill(0, BUY, 0.5, t=3000)],
+            position=0.5)
+    assert p.hold is None and p.residual == pytest.approx(0.0)
+    assert sells(p)[0].sz == 0.5
+    assert 3 in buys(p)                       # cell 3's coin went with the stop too
+
+
 def test_after_a_stop_no_buys_while_the_price_is_below_the_grid():
     p = run(position=0.0, price=95.0, stop_loss=96.0)
     assert buys(p) == {} and p.hold is None
