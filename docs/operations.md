@@ -389,9 +389,10 @@ It needs `kubectl` access to the namespace (or `--settings settings.yaml`) and P
 
 ## Prometheus and Grafana (optional)
 
-grid-static serves Prometheus metrics on `:8080/metrics/`. With
+All of it is off by default; nothing here is needed to run a grid. grid-static and the connector
+serve Prometheus metrics on `:8080/metrics/`. With
 [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
-in the cluster, the chart can register the scrape target and ship a dashboard:
+in the cluster, three switches register the scrape targets, ship a dashboard and add alerts:
 
 ```yaml
 monitoring:
@@ -401,21 +402,25 @@ monitoring:
       release: monitoring     # the release name of your kube-prometheus-stack
   grafanaDashboard:
     enabled: true
+  prometheusRule:
+    enabled: true
+    labels:
+      release: monitoring
 ```
 
-The dashboard — *gridstatic* in Grafana — shows per grid: net realised P&L, unrealised P&L,
-position value, account value per perp dex, whether the grid holds, the price inside the grid,
-fills, errors and latency. Without the operator, import `chart/files/dashboard.json` by hand.
+The dashboard — *gridstatic* in Grafana — fits one screen: per grid whether it trades or holds,
+its realised P&L and its price between the bounds; the active alerts; how long Hyperliquid takes
+per request type; and whether the bot is up and its rounds complete. Without the operator, import
+`chart/files/dashboard.json` by hand.
 
 | metric | what it is |
 |---|---|
 | `grid_realized_gain_usd_total`, `grid_realized_loss_usd_total`, `grid_fees_usd_total` | `closedPnl` and fees of the grid's fills on the exchange, **stop-outs included**. Net realised P&L over a range is `increase(gain) - increase(loss) - increase(fees)`. |
-| `grid_position`, `grid_position_value_usd`, `grid_unrealized_pnl_usd` | the position as the exchange reports it, valued at the mark price |
-| `grid_account_value_usd{dex}` | the balance the grid's orders draw on |
 | `grid_on_hold` | 1 while new buys are held back — see [When the grid holds](#when-the-grid-holds) |
+| `grid_mark_price`, `grid_lower_bound`, `grid_upper_bound`, `grid_stop_loss_price` | the price and the grid around it |
+| `grid_last_round_timestamp_seconds` | when the last complete round ended: a bot can be up and still be stuck |
 | `connector_hl_request_duration_seconds{api, request}` | how long Hyperliquid takes per request type (`userFills`, `frontendOpenOrders`, `order`, …), measured in the connector where it goes over the network |
 | `connector_hl_requests_total{api, request, outcome}` | the same requests by outcome: `ok`, `rejected` (answered but refused), `rate_limited`, `http_4xx`, `http_5xx`, `timeout`, `connection` |
-| `connector_http_request_duration_seconds{route}` | how long the connector takes to answer grid-static; the difference with the above is the connector itself |
 | `grid_profit_usd` | the bot's own view of completed buy→sell cycles. It starts at zero on every restart and leaves out stop-outs; use the realised counters above for P&L. |
 
 The realised counters count each fill once, from the moment the pod starts. Fills that happen

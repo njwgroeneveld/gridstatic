@@ -48,29 +48,16 @@ grid_order_placement_latency = Histogram(
     ["coin"], buckets=[0.1, 0.25, 0.5, 1, 2.5, 5]
 )
 
-# ── Is the bot healthy ────────────────────────────────────────────────────────
-grid_build_info = Gauge(
-    "grid_build_info", "Always 1; the commit the image was built from", ["commit"]
-)
 grid_last_round_timestamp = Gauge(
     "grid_last_round_timestamp_seconds",
     "When the last complete round ended. A bot can be up and still be stuck.", ["coin"]
 )
 
-# ── What the exchange says, read every round ──────────────────────────────────
-# The P&L above is the bot's own view of completed cycles and starts at zero on
-# every restart. These come from the exchange: the realised ones are counters,
-# so increase() over any range survives a restart -- only fills that happen
-# while the pod is down are missed.
-grid_position = Gauge(
-    "grid_position", "Position in coin, as the exchange reports it", ["coin"]
-)
-grid_position_value_usd = Gauge(
-    "grid_position_value_usd", "Position times the mark price", ["coin"]
-)
-grid_unrealized_pnl_usd = Gauge(
-    "grid_unrealized_pnl_usd", "(mark - entry price) x position", ["coin"]
-)
+# ── Realised P&L, as the exchange has it ─────────────────────────────────────
+# grid_profit_usd above is the bot's own view of completed cycles: it starts at
+# zero on every restart and leaves out stop-outs. These are counters of the
+# exchange's closedPnl, so increase() over any range survives a restart -- only
+# fills that happen while the pod is down are missed.
 grid_realized_gain_usd = Counter(
     "grid_realized_gain_usd", "Sum of positive closedPnl of this grid's fills", ["coin"]
 )
@@ -80,8 +67,4 @@ grid_realized_loss_usd = Counter(
 )
 grid_fees_usd = Counter(
     "grid_fees_usd", "Fees paid on this grid's fills", ["coin"]
-)
-grid_account_value_usd = Gauge(
-    "grid_account_value_usd", "Account value on the perp dex the grid trades on. Grids "
-    "on the same dex share it: sum over dex, not over coin.", ["dex", "coin"]
 )

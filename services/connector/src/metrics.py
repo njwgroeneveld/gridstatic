@@ -27,10 +27,6 @@ hl_requests = Counter(
     "refused), rate_limited, http_4xx, http_5xx, timeout, connection or error",
     ["api", "request", "outcome"]
 )
-http_request_duration = Histogram(
-    "connector_http_request_duration_seconds",
-    "Requests the connector answers, by route", ["method", "route", "status"], buckets=_BUCKETS
-)
 
 
 def request_type(url_path: str, payload: dict) -> str:

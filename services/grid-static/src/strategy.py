@@ -25,8 +25,6 @@ _LOOKUPS_PER_ROUND = 50             # order-status calls to tie fills to cells
 _REPEAT_MS = 60 * 60 * 1000         # a standing hold or notice is repeated hourly
 _DAY_MS = 24 * 60 * 60 * 1000
 _UNREADABLE_ALERT_AFTER = 3          # failed rounds in a row before an alert
-_ACCOUNT_VALUE_EVERY_MS = 5 * 60 * 1000   # the dashboard's account value
-
 
 def dex_of(coin: str) -> str:
     """The perp dex a coin trades on: "xyz" for "xyz:XYZ100", "" by default."""
@@ -60,8 +58,7 @@ class StaticGrid:
         self._cloid_of: dict[int, str | None] = {}
         self._started_ms = self._now_ms()
         self._announced: dict[int, int] = {}    # oid -> fill time, see _announce_fills
-        self._counted: dict[str, int] = {}      # fill id -> fill time, see _report_exchange
-        self._account_value_read_ms = -_ACCOUNT_VALUE_EVERY_MS   # the first round reads it
+        self._counted: dict[str, int] = {}      # fill id -> fill time, see _count_realised
         self._hold: str | None = None
         self._hold_alerted_ms = 0
         self._notice_alerted_ms: dict[str, int] = {}
@@ -196,8 +193,7 @@ class StaticGrid:
             return None
         self._failed_reads = 0
 
-        held = positions.get(self.coin) or {}
-        position = float(held.get("szi", 0.0))
+        position = float((positions.get(self.coin) or {}).get("szi", 0.0))
         for o in orders:
             if o.get("oid") is not None:
                 self._cloid_of[int(o["oid"])] = o.get("cloid")
@@ -211,7 +207,7 @@ class StaticGrid:
         placed, self._placed_oids = await self._execute(p)
         await self._report(p, tied, price, {int(o["oid"]) for o in orders if o.get("oid") is not None})
         await self._report_stop(position, price, placed)
-        await self._report_exchange(position, float(held.get("entry_px") or 0.0), price, tied)
+        self._count_realised(tied)
 
         self.last_plan, self.last_price, self.last_position = p, price, position
         self._last_placed = placed
@@ -328,17 +324,11 @@ class StaticGrid:
             log.info(f"[{self.coin_key}] resumed: price {price} is back inside the grid")
             await self.alerter.send_alert("grid_resumed", {**self._label(), "price": price})
 
-    async def _report_exchange(self, position: float, entry_px: float, price: float,
-                               tied: list[tuple[TaggedFill, dict]]) -> None:
-        """The position, its value and the realised P&L as the exchange has them.
-        Realised P&L is the closedPnl of this grid's fills, stop-outs included,
-        each fill counted once and only fills since the start: after a restart
-        the counters begin again, and increase() in Prometheus handles that."""
-        metrics.grid_position.labels(coin=self.coin).set(position)
-        metrics.grid_position_value_usd.labels(coin=self.coin).set(position * price)
-        metrics.grid_unrealized_pnl_usd.labels(coin=self.coin).set(
-            (price - entry_px) * position if position else 0.0)
-
+    def _count_realised(self, tied: list[tuple[TaggedFill, dict]]) -> None:
+        """Realised P&L as the exchange has it: the closedPnl of this grid's fills,
+        stop-outs included, each fill counted once and only fills since the
+        start. After a restart the counters begin again, and increase() in
+        Prometheus handles that."""
         for t, f in tied:
             key = str(f.get("tid") or f"{f['oid']}-{t.time}-{f['sz']}")
             if t.time <= self._started_ms or key in self._counted:
@@ -353,20 +343,6 @@ class StaticGrid:
         horizon = self._now_ms() - self.lookback_ms
         for key in [k for k, t in self._counted.items() if t < horizon]:
             del self._counted[key]
-
-        # Only for the dashboard, and an account value moves slowly: reading it
-        # every round cost two exchange requests per round for nothing.
-        now = self._now_ms()
-        if now - self._account_value_read_ms < _ACCOUNT_VALUE_EVERY_MS:
-            return
-        dex = dex_of(self.coin)
-        try:
-            value = await self.connector.get_account_value(dex=dex)
-        except Exception:
-            metrics.grid_errors_total.labels(type="account_value").inc()
-            return
-        self._account_value_read_ms = now
-        metrics.grid_account_value_usd.labels(dex=dex or "default", coin=self.coin).set(value)
 
     async def _notice(self, msg: str, key: str | None = None) -> None:
         """An error alert, at most once an hour per kind."""

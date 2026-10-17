@@ -90,7 +90,5 @@ def test_the_info_client_times_its_own_requests(monkeypatch):
 def test_the_connector_serves_its_metrics():
     from fastapi.testclient import TestClient
     from src.main import app
-    TestClient(app).get("/health")
     body = TestClient(app).get("/metrics/").text
     assert "connector_hl_requests_total" in body
-    assert 'route="/health"' in body

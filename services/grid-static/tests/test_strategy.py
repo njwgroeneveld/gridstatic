@@ -253,21 +253,14 @@ async def test_realised_pnl_comes_from_the_exchange_stop_included(grid, connecto
     assert delta["grid_fees_usd_total"] == pytest.approx(0.06)
 
 
-async def test_position_and_account_value_are_exported(config, connector, alerter, clock):
+async def test_the_price_and_the_bounds_are_exported(config, connector, alerter, clock):
     from src.strategy import StaticGrid
     config["coin"] = "xyz:XYZ100"
     g = StaticGrid("NDX", config, strategy_allocation_pct=100, start_balance=550,
                    connector=connector, alerter=alerter, clock=clock)
     connector.get_open_orders.return_value = []
-    connector.get_positions.return_value = {"xyz:XYZ100": {"szi": 0.5, "entry_px": 150.0}}
-    connector.get_account_value.return_value = 99.5
     await g.start()
     await g.run_round()
-    assert _sample("grid_position", coin="xyz:XYZ100") == 0.5
-    assert _sample("grid_position_value_usd", coin="xyz:XYZ100") == pytest.approx(77.5)
-    assert _sample("grid_unrealized_pnl_usd", coin="xyz:XYZ100") == pytest.approx(2.5)
-    assert _sample("grid_account_value_usd", dex="xyz", coin="xyz:XYZ100") == 99.5
-    # the grid itself, for the price-and-bounds panel
     assert _sample("grid_mark_price", coin="xyz:XYZ100") == 155.0
     assert (_sample("grid_lower_bound", coin="xyz:XYZ100"),
             _sample("grid_upper_bound", coin="xyz:XYZ100")) == (100.0, 200.0)
@@ -330,23 +323,6 @@ async def test_a_round_reads_the_position_of_its_own_dex_only(config, connector,
         await g.run_round()
         connector.get_positions.assert_awaited_once_with(dex=dex)
 
-
-async def test_the_account_value_is_read_at_most_every_five_minutes(grid, connector, clock):
-    await grid.start()
-    connector.get_account_value.reset_mock()
-    await grid.run_round()                         # the first round reads it
-    clock.ms += 30_000
-    await grid.run_round()                         # 30 seconds later: not again
-    assert connector.get_account_value.await_count == 1
-    clock.ms += 5 * 60 * 1000
-    await grid.run_round()
-    assert connector.get_account_value.await_count == 2
-
-
-async def test_an_unreadable_account_value_does_not_stop_the_round(grid, connector):
-    await grid.start()
-    connector.get_account_value.side_effect = RuntimeError("down")
-    assert await grid.run_round() is not None
 
 
 async def test_price_outside_the_grid_is_alerted(grid, connector, alerter):
