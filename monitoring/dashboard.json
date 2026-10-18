@@ -61,13 +61,14 @@
 
     { "id": 5, "type": "row", "title": "Alerts", "gridPos": { "x": 0, "y": 13, "w": 24, "h": 1 } },
     { "id": 6, "type": "state-timeline", "title": "Alerts over time",
-      "description": "When each alert was pending (orange: counting down its 'for' time) or firing (red: sent to Alertmanager). GridstaticDown belongs to no single grid.",
+      "description": "When each alert was pending (orange: counting down its 'for' time) or firing (red: sent to Alertmanager). The green 'no alerts' row fills the time when none was. GridstaticDown belongs to no single grid.",
       "gridPos": { "x": 0, "y": 14, "w": 24, "h": 5 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [{ "refId": "A", "legendFormat": "{{alertname}} {{coin}}",
-        "expr": "(max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"firing\"}) * 2) or max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"pending\"})" }],
-      "fieldConfig": { "defaults": { "noValue": "No alerts in this time range", "color": { "mode": "thresholds" },
+        "expr": "(max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"firing\"}) * 2) or max by (alertname, coin) (ALERTS{alertname=~\"Gridstatic.*\", namespace=\"$namespace\", coin=~\"$coin|\", alertstate=\"pending\"}) or on () label_replace(vector(0), \"alertname\", \"no alerts\", \"\", \"\")" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
         "mappings": [{ "type": "value", "options": {
+          "0": { "text": "all clear", "color": "green" },
           "1": { "text": "pending", "color": "orange" }, "2": { "text": "firing", "color": "red" } } }] } },
       "options": { "showValue": "never", "mergeValues": true, "legend": { "showLegend": false } } },
 
