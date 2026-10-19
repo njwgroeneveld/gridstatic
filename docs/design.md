@@ -267,7 +267,8 @@ probe, so a pod is only "ready" once its application has actually started.
 
 ## Incidents
 
-These happened with versions that kept a database. Each one ends with what is different now.
+The first three happened with versions that kept a database; the last two on the exchange-as-truth
+design, found once its metrics were collected. Each one ends with what is different now.
 
 ### 1. Eight buys on one line (2026-09-09)
 
@@ -335,6 +336,59 @@ Kubernetes restarted the pod.
 **Now.** There is no database service and no schema to wait for. The wait loop and the readiness
 probes stay.
 
+### 4. Two grids on hold for days, and nobody saw it (2026-10-17)
+
+**What happened.** Both testnet grids turned out to have placed no new buys for days. The bot did
+what it is built to do — hold, and say so in its log and in an hourly notice — but nothing made it
+visible: Prometheus had never collected a single metric of it. The Service carried
+`prometheus.io/scrape` annotations, which the Prometheus Operator ignores; it only follows
+ServiceMonitors. The process's own counters, read straight from the pod, showed both grids on
+hold and 14,398 failed order placements over its 15 days. When and why those failed is lost: the
+counters died with the next restart.
+
+**Cause of the BTC hold — a bug.** On 2026-10-15 the stop closed the whole position (0.00473 BTC at
+79,969, −$14.50). Flat, every cell was free, and cell 0 bought again. But only a *sell* fill ended
+what a cell held; a *stop* fill did not. The buy from before the stop came back as unsold coin next
+to the new one: 0.00196 counted against a position of 0.00098, and the grid held. The hold message
+named only the resting sells, so it read as nonsense: "resting sells of 0 exceed the position".
+
+**Cause of the NASDAQ hold — correct, by design.** 0.0004 of the position belonged to no cell:
+0.0003 from an untagged order of an older version, and 0.0001 from a partial buy on the thin
+testnet book that sat unsold until it fell out of the 72-hour look-back. Holding was right. It was
+closed by hand with a reduce-only limit sell; a market sell was refused, as the only bid sat 18%
+below the mark and made it a $9.64 order, under the $10 minimum.
+
+**Now.** A stop fill ends what every cell held, and the hold message names the unsold coin; a
+regression test replays the BTC case. [`monitoring/`](../monitoring/README.md) registers the scrape
+targets and adds two alerts evaluated outside the bot: `GridstaticHold` after 30 minutes on hold,
+and `GridstaticDown`, which uses `absent(up == 1)` because a pod that is gone leaves no `up` series
+to be 0. Both link to a runbook; `GridstaticDown` was tested end to end by scaling the bot to zero.
+The lesson: a safe default — hold — is only safe while someone sees it.
+
+### 5. Rounds took seconds, and the obvious suspect was half of it (2026-10-17)
+
+**What happened.** A round — four reads, one decision — took 3.4 seconds on average, up to 9 at
+p95. Harmless at a 30-second interval, but the grid acted on a market up to seconds old.
+
+**Measured, not guessed.** The connector now times every request where it goes over the network,
+per request type. The suspected one, `userFills`, sent the account's whole history — 444 fills,
+145 KB — to keep the 16 of the last 72 hours. But `clearinghouseState` cost as much, by count
+alone: 11 requests a minute, because every grid read the positions of every dex each round and
+used one coin of the answer. That also coupled the grids: one dex that could not be read stopped
+the grids on all the others.
+
+**Now.** Each grid reads the position of its own dex. The parameter is optional — without it the
+connector reads every dex as before — so either service could be rolled out first. Fills come from
+`userFillsByTime`, paged so the newest are never the ones cut off; checked against testnet, it
+returned the same 16 fills in 5.9 KB and 0.62 s instead of 1.47. A round reads in two parallel
+phases. Rounds take 1.6 seconds on average.
+
+**Not all four at once.** Read together, the fills can be answered before the book: a buy that
+fills in between is gone from the book and not yet in the fills — an empty cell, and a second buy
+on it, incident 1 again. The book is read first; position and fills follow together, and when
+those two miss each other the position does not add up and the grid holds one round. A test fixes
+the order; run against all four reads at once, it fails.
+
 ---
 
 ## Known limitations
@@ -346,7 +400,8 @@ probes stay.
   (subaccount) to trade for, and reads that address. An API wallet needs the account it trades
   for passed differently; until then the bot detects the mismatch and holds.
 - **A long outage needs a look.** Coin bought more than `fillLookbackHours` before the bot saw it
-  cannot be tied to its cell. The grid holds, and a person decides.
+  cannot be tied to its cell. The grid holds, and a person decides. On a thin book a partial fill
+  too small to sell can age out the same way — see incident 4.
 - **One grid per coin per account.** Several grids on one coin need several accounts, and several
   installations.
 - **Logs do not survive a restart.** Only the current container's log is available (plus one

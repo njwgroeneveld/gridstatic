@@ -87,6 +87,8 @@ ClusterIP. Nothing is exposed outside the cluster.
 | Eight buys on one line | A filled line looked free: the database matched by price, the exchange filled at another | A cell is never free while the position says otherwise |
 | Prices arrived as strings | `Decimal` → JSON through the database service; mocks returned floats | No database; verify at the real boundary |
 | A crash on every fresh install | Startup raced the database schema migration | No database to wait for |
+| Two grids on hold for days, unseen | No metric was ever collected; and a stop fill did not end what the cells held | Alerts outside the bot; a stop resets every cell |
+| Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Measured per request: round time halved, in two parallel phases — never the fills before the book |
 
 The full write-ups are in [`docs/design.md`](docs/design.md#incidents).
 
