@@ -34,8 +34,8 @@ kubectl -n gridstatic label configmap gridstatic-dashboard grafana_dashboard=1
 
 One screen, four rows:
 
-- **Grids** — per grid whether it trades or holds, its realised P&L, and its price between the
-  lowest and highest line with the stop-loss below.
+- **Grids** — per grid whether it trades or holds, its realised P&L, how much of its budget is in
+  use, and its price between the lowest and highest line with the stop-loss below.
 - **Alerts** — when each alert was pending or firing.
 - **Exchange API** — how long Hyperliquid takes per kind of request, where the waiting adds up,
   and which requests fail.
@@ -49,6 +49,7 @@ One screen, four rows:
 | `grid_realized_gain_usd_total`, `grid_realized_loss_usd_total`, `grid_fees_usd_total` | `closedPnl` and fees of the grid's fills on the exchange, **stop-outs included**. Net realised P&L over a range is `increase(gain) - increase(loss) - increase(fees)`. |
 | `grid_on_hold` | 1 while new buys are held back — see [When the grid holds](../docs/operations.md#when-the-grid-holds) |
 | `grid_mark_price`, `grid_lower_bound`, `grid_upper_bound`, `grid_stop_loss_price` | the price and the grid around it |
+| `grid_budget_usd`, `grid_position_value_usd` | the position value with every cell bought, and the position value now — both leverage included |
 | `grid_last_round_timestamp_seconds` | when the last complete round ended: a bot can be up and still be stuck |
 | `connector_hl_request_duration_seconds{api, request}` | how long Hyperliquid takes per request type (`userFillsByTime`, `frontendOpenOrders`, `order`, …), measured in the connector where it goes over the network |
 | `connector_hl_requests_total{api, request, outcome}` | the same requests by outcome: `ok`, `rejected` (answered but refused), `rate_limited`, `http_4xx`, `http_5xx`, `timeout`, `connection` |

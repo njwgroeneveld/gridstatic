@@ -259,11 +259,15 @@ async def test_the_price_and_the_bounds_are_exported(config, connector, alerter,
     g = StaticGrid("NDX", config, strategy_allocation_pct=100, start_balance=550,
                    connector=connector, alerter=alerter, clock=clock)
     connector.get_open_orders.return_value = []
+    connector.get_positions.return_value = {"xyz:XYZ100": {"szi": 0.5, "entry_px": 150.0}}
     await g.start()
     await g.run_round()
     assert _sample("grid_mark_price", coin="xyz:XYZ100") == 155.0
     assert (_sample("grid_lower_bound", coin="xyz:XYZ100"),
             _sample("grid_upper_bound", coin="xyz:XYZ100")) == (100.0, 200.0)
+    # capital: $50 a line at 1x over 10 cells, and 0.5 coin at 155 in use
+    assert _sample("grid_budget_usd", coin="xyz:XYZ100") == pytest.approx(500.0)
+    assert _sample("grid_position_value_usd", coin="xyz:XYZ100") == pytest.approx(77.5)
 
 
 async def test_the_last_round_time_moves_only_with_a_complete_round(grid, connector, clock):

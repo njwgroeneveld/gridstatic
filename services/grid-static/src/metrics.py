@@ -40,6 +40,14 @@ grid_upper_bound = Gauge("grid_upper_bound", "Highest line of the grid", ["coin"
 grid_stop_loss_price = Gauge(
     "grid_stop_loss_price", "Trigger price of the grid's stop; absent without one", ["coin"]
 )
+# Capital: both as position value, leverage included, so they compare directly.
+grid_budget_usd = Gauge(
+    "grid_budget_usd", "Position value with every cell bought: size per line x leverage x cells",
+    ["coin"]
+)
+grid_position_value_usd = Gauge(
+    "grid_position_value_usd", "Position value now: position x mark price", ["coin"]
+)
 grid_on_hold = Gauge(
     "grid_on_hold", "1 while new buys are held back over an unexplained position", ["coin"]
 )

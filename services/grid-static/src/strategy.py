@@ -79,6 +79,8 @@ class StaticGrid:
         for counter in (metrics.grid_realized_gain_usd, metrics.grid_realized_loss_usd,
                         metrics.grid_fees_usd):
             counter.labels(coin=self.coin)
+        metrics.grid_budget_usd.labels(coin=self.coin).set(
+            self.size_usd * self.leverage * (len(self.levels) - 1))
         metrics.grid_lower_bound.labels(coin=self.coin).set(self.levels[0])
         metrics.grid_upper_bound.labels(coin=self.coin).set(self.levels[-1])
         if self.stop_loss is not None:
@@ -214,6 +216,7 @@ class StaticGrid:
         self.last_round_ms = self._now_ms()
         metrics.grid_round_duration.labels(coin=self.coin).observe(time.time() - t0)
         metrics.grid_last_round_timestamp.labels(coin=self.coin).set(self.last_round_ms / 1000)
+        metrics.grid_position_value_usd.labels(coin=self.coin).set(position * price)
         return p
 
     def _vanished(self, orders: list[dict], fills: list[dict]) -> str | None:
