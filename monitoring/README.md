@@ -11,7 +11,66 @@ and alerts, for a cluster that runs
 | `alerts.yaml` | two alert rules, `GridstaticDown` and `GridstaticHold` |
 | `dashboard.json` | the Grafana dashboard |
 
-<!-- Screenshots: put PNGs in monitoring/screenshots/ and list them here. -->
+![The dashboard: grids, alerts and the exchange API](screenshots/dashboard-grids-alerts-exchange.png)
+
+*Two grids on Hyperliquid's testnet: BTC and the Nasdaq-100 (`xyz:XYZ100`, a HIP-3 market).*
+
+## Reading the dashboard
+
+One screen, four rows. Every panel also explains itself under its ⓘ.
+
+### Grids — how each grid is doing
+
+| panel | what it shows | how to read it |
+|---|---|---|
+| **State** | *trading* or *HOLD*, per grid | On hold the grid places no new buys, because its position does not add up to its own orders. Sells and the stop still go out. The reason is in the log and in `/status`; see [When the grid holds](../docs/operations.md#when-the-grid-holds). |
+| **Net realised P&L** | closed profit minus fees over the selected time range | Taken from the exchange's own `closedPnl`, so a stop-out counts as the loss it was. It counts from when the pod started; set the range to a day or a week. |
+| **Capital** | per grid: *in use*, *budget* and the share used | Both as position value, leverage included. *Budget* is every cell bought: size per line × leverage × cells. *In use* is the coin held now × the mark price. A grid only holds coin for the cells below the price that filled, so with the price near the top little is in use — that is the design, not idle money. Profit is not added to the budget: order sizes are fixed. |
+| **Price and grid** | one panel per grid: the mark price (yellow) between the highest and lowest line (blue, dashed), and the stop-loss (red, dotted) | Inside the bounds the grid trades. Below the lowest line there is nothing left to buy; above the highest nothing left to sell. Below the stop the position is closed, and the grid starts over once the price is back inside. |
+
+### Alerts — when something needed attention
+
+**Alerts over time** shows each alert as a row: orange while *pending* (its condition holds, its
+`for` time is running), red once *firing* (sent to Alertmanager, and from there to e.g. Telegram).
+The green *no alerts* row fills the time when none was. The two rules and what to do when they
+fire are [below](#alerts).
+
+### Exchange API — what the bot waits for
+
+The connector is the only service that talks to Hyperliquid, and it times every request where it
+goes over the network. Hyperliquid has two endpoints: `/info` to read and `/exchange` to act. The
+panels name the request types:
+
+| on the dashboard | Hyperliquid request | when |
+|---|---|---|
+| Open orders | `frontendOpenOrders` | every round |
+| Mark price | `metaAndAssetCtxs` | every round |
+| Position | `clearinghouseState` | every round |
+| Fills | `userFillsByTime` | every round |
+| Place order, Cancel order | `order`, `cancel` | when the grid trades |
+| Order lookup | `orderStatus` | when a fill comes in for an order the bot does not know yet |
+| Startup check, Lot size, Set leverage, Spot balance | `allMids`, `meta`, `updateLeverage`, `spotClearinghouseState` | only when the bot starts |
+
+| panel | what it shows | how to read it |
+|---|---|---|
+| **Where the time goes** | seconds per minute spent waiting, per request type | How slow × how often: the longest bar is what makes a round slow. Green below 10 s a minute, orange from 10, red from 20 — a third of the time waiting on one kind of request. |
+| **Latency p95 per request** | per request type, the time 95% of requests were answered within | The 95th percentile instead of the average, because the average hides the slow ones. Single spikes are the testnet; a line that stays high is not. |
+| **Failed requests per minute** | every outcome other than *ok* | *rejected* (answered, but refused — e.g. under the $10 minimum), *rate_limited*, *http_4xx/5xx*, *timeout*, *connection*. Empty is good. |
+
+Only request types made in the time range are shown; the start-up ones disappear after a while.
+
+### Health — is the service itself all right
+
+![The health row](screenshots/dashboard-health.png)
+
+| panel | what it shows | how to read it |
+|---|---|---|
+| **Scrape target** | whether Prometheus reaches grid-static | *DOWN* for 5 minutes fires `GridstaticDown`. |
+| **Rounds that completed** | completed rounds ÷ all rounds over the time range | A simple SLO. A round is skipped when the exchange cannot be read — the bot then acts on nothing. A few skipped rounds on testnet are normal; a falling line is not. |
+| **Since the last round** | seconds since each grid's last complete round | A round runs every 30 seconds, so 30–60 s is normal. Orange from 2 minutes, red from 5: the bot is up but stuck. |
+| **CPU per pod** | CPU per service, in cores, with the limit dashed | Far below the limit is normal. |
+| **CPU throttling per pod** | the share of time a container hit its CPU limit and had to wait | The one the average hides: grid-static uses a tenth of its limit on average, yet hits it in short bursts. Up to ~10% costs milliseconds; a steady rise means the limit is too low. |
+| **Memory per pod** | memory per service, with the limit dashed | At the limit Kubernetes kills the container (OOM). A line that only climbs is a leak. |
 
 ## Applying it
 
@@ -29,18 +88,6 @@ kubectl -n gridstatic create configmap gridstatic-dashboard \
 kubectl -n gridstatic label configmap gridstatic-dashboard grafana_dashboard=1
 # ... or import monitoring/dashboard.json by hand: Dashboards → New → Import.
 ```
-
-## The dashboard
-
-One screen, four rows:
-
-- **Grids** — per grid whether it trades or holds, its realised P&L, how much of its budget is in
-  use, and its price between the lowest and highest line with the stop-loss below.
-- **Alerts** — when each alert was pending or firing.
-- **Exchange API** — how long Hyperliquid takes per kind of request, where the waiting adds up,
-  and which requests fail.
-- **Health** — whether Prometheus reaches the bot, the share of rounds that completed, seconds
-  since the last round, and CPU, CPU throttling and memory per pod against their limits.
 
 ## Metrics
 
