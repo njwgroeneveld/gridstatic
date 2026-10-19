@@ -96,12 +96,14 @@
 
     { "id": 7, "type": "row", "title": "Exchange API", "gridPos": { "x": 0, "y": 20, "w": 24, "h": 1 } },
     { "id": 8, "type": "bargauge", "title": "Where the time goes",
-      "description": "Seconds per minute spent waiting on Hyperliquid, per request type, measured in the connector. The biggest bar is what makes a round slow.",
+      "description": "Seconds per minute spent waiting on Hyperliquid, per request type, measured in the connector. The longest bar is what makes a round slow. Green below 10 s a minute; orange from 10; red from 20 -- a third of the time waiting on one kind of request.",
       "gridPos": { "x": 0, "y": 21, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [{ "refId": "A", "instant": true, "legendFormat": "{{request}}",
         "expr": "sort_desc(sum by (request) (rate(connector_hl_request_duration_seconds_sum{namespace=\"$namespace\"}[15m])) * 60 > 0)" }],
-      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "min": 0, "color": { "mode": "continuous-BlYlRd" } }, "overrides": [
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "min": 0, "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "orange", "value": 10 }, { "color": "red", "value": 20 } ] } }, "overrides": [
         { "matcher": { "id": "byName", "options": "frontendOpenOrders" }, "properties": [{ "id": "displayName", "value": "Open orders" }] },
         { "matcher": { "id": "byName", "options": "metaAndAssetCtxs" }, "properties": [{ "id": "displayName", "value": "Mark price" }] },
         { "matcher": { "id": "byName", "options": "clearinghouseState" }, "properties": [{ "id": "displayName", "value": "Position" }] },
@@ -113,7 +115,7 @@
         { "matcher": { "id": "byName", "options": "meta" }, "properties": [{ "id": "displayName", "value": "Lot size" }] },
         { "matcher": { "id": "byName", "options": "allMids" }, "properties": [{ "id": "displayName", "value": "Startup check" }] },
         { "matcher": { "id": "byName", "options": "spotClearinghouseState" }, "properties": [{ "id": "displayName", "value": "Spot balance" }] }] },
-      "options": { "orientation": "horizontal", "displayMode": "gradient", "namePlacement": "left",
+      "options": { "orientation": "horizontal", "displayMode": "basic", "namePlacement": "left",
         "reduceOptions": { "calcs": ["lastNotNull"] } } },
     { "id": 9, "type": "timeseries", "title": "Latency p95 per request",
       "description": "95% of the requests of each kind were answered faster than this line. Only requests made in the window are shown.",
