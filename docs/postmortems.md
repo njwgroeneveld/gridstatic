@@ -58,17 +58,19 @@ from the settings after converting every number to `float`. The lesson was appli
 test had), the real SDK signatures were checked against the calls, and `gridcheck` was run
 against the real testnet API.
 
-### 3. A crash on every fresh install (2026-09-10)
+### 3. A shared free database dropped the bot's requests (September 2026)
 
-**What happened.** On a fresh install grid-static restarted once with
-`httpx.ConnectError: All connection attempts failed`, then came up fine.
+**What happened.** The bot's state lived in a free cloud Postgres, shared with several other
+projects. In September the provider's dashboard reported that the project was *dropping
+requests*. The bot hung on its database calls, and a fresh install crashed at startup with
+`httpx.ConnectError: All connection attempts failed` on the same unreachable service.
 
-**Cause.** Startup waited for the connector but not for the database service, whose
-initContainer was still applying the schema. The first database call failed, uvicorn exited, and
-Kubernetes restarted the pod.
+**Cause.** One shared, free-tier dependency stood between the bot and its own state. Which limit
+was hit could not be established afterwards: the provider's usage history goes back one month.
 
-**Now.** There is no database service and no schema to wait for. The wait loop and the readiness
-probes stay.
+**Now.** There is no database. The bot reads its state from the exchange, which it needs anyway;
+the database's egress went to zero once 0.4 was deployed on October 2. The startup wait for the
+connector and the readiness probes stay.
 
 ### 4. Two grids on hold for days, and nobody saw it (2026-10-17)
 

@@ -42,14 +42,14 @@ mainnet key and `hyperliquid.testnet: false`, and is done by hand.
 ### Why there is no database
 
 The database held the bot's view of its own orders and trades. The bot decided from that view,
-and updated it after the exchange had acted. Two writes that are not atomic drift apart, and
-every incident in this document is such a drift:
+and updated it after the exchange had acted. Two writes that are not atomic drift apart, and the
+database itself was one more thing that could stop the bot:
 
-| | what drifted |
+| | what went wrong |
 |---|---|
-| [Incident 1](postmortems.md#1-eight-buys-on-one-line-2026-09-09) | the database said "line free", the exchange held the position |
-| [Incident 2](postmortems.md#2-prices-arrived-as-strings-2026-09-10) | `Decimal` → JSON on the way out of the database service |
-| [Incident 3](postmortems.md#3-a-crash-on-every-fresh-install-2026-09-10) | waiting for the database schema at startup |
+| [Incident 1](postmortems.md#1-eight-buys-on-one-line-2026-09-09) | drift: the database said "line free", the exchange held the position |
+| [Incident 2](postmortems.md#2-prices-arrived-as-strings-2026-09-10) | drift: `Decimal` → JSON on the way out of the database service |
+| [Incident 3](postmortems.md#3-a-shared-free-database-dropped-the-bots-requests-september-2026) | the database itself: a free service, shared with other projects, dropped requests |
 
 On top of that the database cost a service, a hosted project, a choice of connection pooler, a
 Secret, an initContainer, a schema copy with its own CI check, and half of the installer.

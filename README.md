@@ -20,9 +20,9 @@ round.
 
 | | |
 |---|---|
-| **One source of truth** | Version 0.3 kept a database next to the exchange. All three production incidents came from the two drifting apart. 0.4 removed the database: the exchange is the only state. |
+| **One source of truth** | Version 0.3 kept a database next to the exchange. Its three production incidents came from the two drifting apart, or from the database itself. 0.4 removed the database: the exchange is the only state. |
 | **Fail-safe by default** | An unreadable exchange is never an empty one: the round does nothing. Coin the bot cannot account for puts the grid *on hold* — no new buys, sells still go out. An unsafe config refuses to start. |
-| **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/design.md`](docs/design.md), and has a regression test. |
+| **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/postmortems.md`](docs/postmortems.md), and has a regression test. |
 | **Tested where it breaks** | All decisions live in one pure function. Its safety rules were each removed once to confirm a test fails without them. Assumptions were checked at the real boundary: the SDK's signatures, the testnet API, a rendered chart. |
 | **Operable** | Helm chart, multi-arch images, CI gates, a one-command installer, Telegram alerts, Prometheus metrics. |
 
@@ -104,7 +104,7 @@ ClusterIP. Nothing is exposed outside the cluster.
 |---|---|---|
 | Eight buys on one line | A filled line looked free: the database matched by price, the exchange filled at another | A cell is never free while the position says otherwise |
 | Prices arrived as strings | `Decimal` → JSON through the database service; mocks returned floats | No database; verify at the real boundary |
-| A crash on every fresh install | Startup raced the database schema migration | No database to wait for |
+| A shared free database dropped requests | One free cloud Postgres, shared by several projects, stood between the bot and its state | No database |
 | Two grids on hold for days, unseen | No metric was ever collected; and a stop fill did not end what the cells held | Alerts outside the bot; a stop resets every cell |
 | Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Measured per request: round time halved, in two parallel phases — never the fills before the book |
 
