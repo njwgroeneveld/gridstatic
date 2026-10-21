@@ -50,7 +50,7 @@ Four ideas carry the design:
   out. That covers partial fills, restarts and a crash halfway through replacing an order.
 - **The position has to add up.** Before any new buy, every coin of the position must be explained
   by the bot's own orders. If not, the grid holds and alerts. A buy too few costs a cycle; a buy
-  too many is [incident 1](docs/design.md#1-eight-buys-on-one-line-2026-09-09).
+  too many is [incident 1](docs/postmortems.md#1-eight-buys-on-one-line-2026-09-09).
 - **Protection lives on the exchange.** The optional stop-loss is a reduce-only stop order, sized
   to the position every round, so it fires even when the cluster is down. After a stop the grid
   resumes on its own once the price is back inside.
@@ -82,7 +82,7 @@ ClusterIP. Nothing is exposed outside the cluster.
 
 ---
 
-## Incidents and what they changed
+## Postmortems
 
 | Incident | Root cause | Now |
 |---|---|---|
@@ -92,7 +92,7 @@ ClusterIP. Nothing is exposed outside the cluster.
 | Two grids on hold for days, unseen | No metric was ever collected; and a stop fill did not end what the cells held | Alerts outside the bot; a stop resets every cell |
 | Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Measured per request: round time halved, in two parallel phases — never the fills before the book |
 
-The full write-ups are in [`docs/design.md`](docs/design.md#incidents).
+The full write-ups are in [`docs/postmortems.md`](docs/postmortems.md).
 
 ---
 
