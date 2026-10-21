@@ -33,6 +33,22 @@ round.
 The price range is cut into lines. Each pair of neighbouring lines is a **cell**: buy on the lower
 line, sell on the upper. A filled buy gets a sell; a filled sell gets its buy back.
 
+```text
+         line     cell (buy → sell)   resting on the exchange
+88,000 ── p4 ──
+                  cell 3  p3 → p4     nothing: a buy above the price would fill at once
+86,000 ── p3 ──
+                  cell 2  p2 → p3     sell at 86,000 (holds coin)
+84,000 ── p2 ──
+   price 83,500 ◄
+                  cell 1  p1 → p2     sell at 84,000 (holds coin)
+82,000 ── p1 ──
+                  cell 0  p0 → p1     buy at 80,000
+80,000 ── p0 ──
+```
+
+Five lines make four cells. Buys rest only below the price; the top line has no cell above it.
+
 ```mermaid
 flowchart LR
     R[read orders, position,<br/>price, fills] --> T[tie fills to cells<br/>via the order id]
