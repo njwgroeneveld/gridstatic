@@ -92,3 +92,29 @@ def test_the_connector_serves_its_metrics():
     from src.main import app
     body = TestClient(app).get("/metrics/").text
     assert "connector_hl_requests_total" in body
+
+
+def _exists(api, request, outcome):
+    return REGISTRY.get_sample_value(
+        "connector_hl_requests_total",
+        {"api": api, "request": request, "outcome": outcome}) is not None
+
+
+def test_every_failure_outcome_starts_at_zero_with_the_first_request():
+    # A series that is born at 1 has no earlier sample, so increase() and rate()
+    # see no rise and the first failure never reaches a graph. Born at 0, it does.
+    api = FakeApi(answer={"universe": []})
+    metrics.instrument(api)
+    api.post("/info", {"type": "brandNewInfoRequest"})
+    for outcome in ("rate_limited", "http_4xx", "http_5xx", "timeout", "connection", "error"):
+        assert _exists("info", "brandNewInfoRequest", outcome)
+        assert _count("info", "brandNewInfoRequest", outcome) == 0
+    assert not _exists("info", "brandNewInfoRequest", "rejected")  # only /exchange refuses
+
+
+def test_an_exchange_request_also_starts_rejected_at_zero():
+    api = FakeApi(answer={"status": "ok", "response": {"type": "cancel", "data": {"statuses": ["success"]}}})
+    metrics.instrument(api)
+    api.post("/exchange", {"action": {"type": "brandNewAction"}})
+    assert _exists("exchange", "brandNewAction", "rejected")
+    assert _count("exchange", "brandNewAction", "rejected") == 0

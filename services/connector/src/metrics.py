@@ -65,7 +65,24 @@ def _rejected(result) -> bool:
     return any(isinstance(s, dict) and "error" in s for s in statuses)
 
 
+_FAILURES = ("rate_limited", "http_4xx", "http_5xx", "timeout", "connection", "error")
+_seen: set[tuple[str, str]] = set()
+
+
+def _start_at_zero(api: str, request: str) -> None:
+    """Create every outcome of a request type at 0 the first time it is made.
+    A series born at 1 has no earlier sample to rise from, so increase() and
+    rate() would never show the first failure."""
+    if (api, request) in _seen:
+        return
+    _seen.add((api, request))
+    outcomes = _FAILURES + ("rejected",) if api == "exchange" else _FAILURES
+    for outcome in outcomes:
+        hl_requests.labels(api, request, outcome)
+
+
 def timed(api: str, request: str, call):
+    _start_at_zero(api, request)
     t0 = time.perf_counter()
     try:
         result = call()
