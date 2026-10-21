@@ -1,7 +1,7 @@
 # gridstatic
 
-A grid trading bot for [Hyperliquid](https://hyperliquid.xyz), run on Kubernetes, that keeps **no
-database**. Every round it reads the exchange — open orders, position, fills — and repairs the
+A grid trading bot for [Hyperliquid](https://hyperliquid.xyz), run on Kubernetes, that keeps no
+database. Every round it reads the exchange — open orders, position, fills — and repairs the
 difference with the grid you configured. A restart, a crash or a network outage is just another
 round.
 
@@ -24,7 +24,7 @@ round.
 | **Fail-safe by default** | An unreadable exchange is never an empty one: the round does nothing. Coin the bot cannot account for puts the grid *on hold* — no new buys, sells still go out. An unsafe config refuses to start. |
 | **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/design.md`](docs/design.md), and has a regression test. |
 | **Tested where it breaks** | All decisions live in one pure function. Its safety rules were each removed once to confirm a test fails without them. Assumptions were checked at the real boundary: the SDK's signatures, the testnet API, a rendered chart. |
-| **Operable** | Helm chart, multi-arch images, CI gates, a one-command installer, Telegram alerts, Prometheus metrics — and no secret ever passes through Helm. |
+| **Operable** | Helm chart, multi-arch images, CI gates, a one-command installer, Telegram alerts, Prometheus metrics. |
 
 ---
 
@@ -58,8 +58,8 @@ Four ideas carry the design:
 How each of these works, with examples: [docs/design.md](docs/design.md#the-exchange-is-the-only-source-of-truth).
 
 It also trades HIP-3 markets — stocks and indices on third-party perp dexes, such as the
-Nasdaq-100 (`xyz:XYZ100`) — and decides from the mark price, because on a thin book the mid
-moves with the bot's own orders.
+Nasdaq-100 (`xyz:XYZ100`). It decides from the mark price, not the mid: the testnet order books
+are thin, so the mid moves with the bot's own orders.
 
 ---
 
@@ -69,7 +69,7 @@ moves with the bot's own orders.
 flowchart LR
     subgraph k8s[Kubernetes namespace]
         GS[grid-static<br/><i>strategy, /status</i>]
-        CON[connector<br/><i>only service with the key</i>]
+        CON[connector<br/><i>only service</i><br/><i>with the key</i>]
         TG[telegram-alerter<br/><i>optional</i>]
     end
     GS --> CON --> HL[Hyperliquid API]
