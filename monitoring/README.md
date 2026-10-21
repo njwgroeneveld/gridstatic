@@ -55,7 +55,7 @@ panels name the request types:
 |---|---|---|
 | **Where the time goes** | seconds per minute spent waiting, per request type | How slow × how often: the longest bar is what makes a round slow. Green below 10 s a minute, orange from 10, red from 20 — a third of the time waiting on one kind of request. |
 | **Latency p95 per request** | per request type, the time 95% of requests were answered within | The 95th percentile instead of the average, because the average hides the slow ones. Single spikes are the testnet; a line that stays high is not. |
-| **Failed requests per minute** | every outcome other than *ok* | *rejected* (answered, but refused — e.g. under the $10 minimum), *rate_limited*, *http_4xx/5xx*, *timeout*, *connection*. Empty is good. |
+| **Failed requests** | how many requests failed in each bar's slice of time | *rejected* (answered, but refused — e.g. under the $10 minimum), *rate_limited*, *http_4xx/5xx*, *timeout*, *connection* (most likely: the node lost its network). Empty is good. |
 
 Only request types made in the time range are shown; the start-up ones disappear after a while.
 
