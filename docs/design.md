@@ -58,8 +58,10 @@ Everything the bot needs is already on the exchange.
 ### A cell, and the client order id
 
 Lines `p_0 < p_1 < … < p_n-1` divide the range. A **cell** `i` is a pair: buy at `p_i`, sell at
-`p_i+1`. Every order belongs to exactly one cell, and its client order id (cloid, 16 bytes) says
-which:
+`p_i+1`. Every order belongs to exactly one cell, and its client order id says which. A cloid is
+an optional 128-bit label the exchange stores with an order
+([Hyperliquid docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint),
+field `c`); gridstatic fills its 16 bytes like this:
 
 | bytes | |
 |---|---|
@@ -94,10 +96,22 @@ Anything bought later has no exit yet. That one rule covers a partial fill, a bu
 completely and left the book, a restart, and a crash between cancelling a small sell and placing
 the bigger one that replaces it.
 
+For example, cell 3 buys 0.0010 BTC at 80,000 and sells at 81,000:
+
+| when | the exchange | the cell's unsold coin | the bot |
+|---|---|---|---|
+| 10:00 | the buy fills half: 0.0004 | 0.0004 (no sell yet) | places a sell of 0.0004 |
+| 10:05 | the rest fills: 0.0006 | 0.0006 (bought after that sell) | cancels the 0.0004 sell, places one of 0.0010 |
+
+A crash between that cancel and that place leaves no sell at all. After the restart the same rule
+reads "bought since the last sell fill": 0.0010, and a sell of 0.0010 goes out. No special case.
+
 ### The position has to add up
 
 `residual = position − resting sells − unsold coin`. In a healthy grid it is zero within half a
-lot. Before the bot places any new buy, it has to be:
+lot. A position of 0.0030 BTC, with sells of 0.0010 on cells 2 and 5 and 0.0010 unsold on cell 7,
+adds up. A position of 0.0034 leaves 0.0004 that no cell accounts for — bought by hand, say — and
+the grid holds. Any of these makes the grid hold, and no new buy goes out:
 
 | | grid holds — no new buys |
 |---|---|

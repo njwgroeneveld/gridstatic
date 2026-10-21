@@ -55,6 +55,8 @@ Four ideas carry the design:
   to the position every round, so it fires even when the cluster is down. After a stop the grid
   resumes on its own once the price is back inside.
 
+How each of these works, with examples: [docs/design.md](docs/design.md#the-exchange-is-the-only-source-of-truth).
+
 It also trades HIP-3 markets — stocks and indices on third-party perp dexes, such as the
 Nasdaq-100 (`xyz:XYZ100`) — and decides from the mark price, because on a thin book the mid
 moves with the bot's own orders.
