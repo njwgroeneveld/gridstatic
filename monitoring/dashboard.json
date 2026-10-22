@@ -41,7 +41,7 @@
       "options": { "colorMode": "value", "textMode": "value_and_name", "graphMode": "none",
         "reduceOptions": { "calcs": ["lastNotNull"] } } },
     { "id": 18, "type": "table", "title": "Capital",
-      "description": "As position value, leverage included. Budget: every cell bought (size per line x leverage x cells). In use: the position now x the mark price. The margin it takes is the value divided by the leverage.",
+      "description": "As position value, leverage included. Budget: every cell bought at today's size (size per line x leverage x cells); the size follows the realised equity of the grid's dex, so the budget moves with profit. In use: the position now x the mark price, bought at the size of its day. The margin it takes is the value divided by the leverage.",
       "gridPos": { "x": 12, "y": 1, "w": 12, "h": 5 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
@@ -55,7 +55,7 @@
         { "id": "merge", "options": {} },
         { "id": "organize", "options": { "excludeByName": { "Time": true },
           "renameByName": { "coin": "Grid", "Value #A": "In use", "Value #B": "Budget", "Value #C": "Used" } } }],
-      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 0 }, "overrides": [
+      "fieldConfig": { "defaults": { "unit": "prefix:$", "decimals": 0 }, "overrides": [
         { "matcher": { "id": "byName", "options": "Grid" }, "properties": [{ "id": "unit", "value": "string" }] },
         { "matcher": { "id": "byName", "options": "Used" }, "properties": [
           { "id": "unit", "value": "percentunit" }, { "id": "decimals", "value": 0 },
