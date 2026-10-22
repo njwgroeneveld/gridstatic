@@ -64,7 +64,7 @@
       "options": { "showHeader": true, "cellHeight": "sm" } },
     { "id": 4, "type": "timeseries", "title": "$coin: price and grid",
       "description": "The mark price between the grid's lowest and highest line, and the stop-loss below it.",
-      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 }, "repeat": "coin", "repeatDirection": "h", "maxPerRow": 2,
+      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 }, "repeat": "coin", "repeatDirection": "h", "maxPerRow": 2,
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         { "refId": "A", "legendFormat": "price", "expr": "max(grid_mark_price{namespace=\"$namespace\", coin=\"$coin\"})" },
@@ -83,7 +83,7 @@
 
     { "id": 19, "type": "timeseries", "title": "Realised equity",
       "description": "Account value of each grid's dex minus the unrealised P&L on it -- the money the order size is computed from, without the swing of open positions. It rises with closed profit and falls with losses, fees and funding; a transfer between the dexes moves the two grid lines and leaves the total alone. Prometheus keeps 14 days; the exchange's own portfolio history goes back further.",
-      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         { "refId": "A", "legendFormat": "Total",
