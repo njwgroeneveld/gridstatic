@@ -63,12 +63,37 @@ async def test_start_ties_every_recent_fill_before_the_first_round(grid, connect
     assert asked == [7, 8]
 
 
-async def test_start_warns_when_the_account_cannot_carry_the_grid(grid, connector, alerter):
-    # Six cells below 155 at $50 margin each need $300.
-    connector.get_account_value.return_value = 120.0
+async def test_start_warns_when_orders_would_be_under_the_minimum(grid, connector, alerter):
+    # $100 equity at 100% over 11 lines is $9.09 a line: at 1x under the $10 minimum.
+    connector.get_account_value.return_value = 100.0
     await grid.start()
     assert "error" in _alert_types(alerter)
-    assert "margin" in alerter.send_alert.call_args.args[1]["message"]
+    assert "minimum" in alerter.send_alert.call_args.args[1]["message"]
+
+
+async def test_the_size_follows_realised_equity_every_round(grid, connector):
+    await grid.start()
+    assert grid.size_usd == 50.0
+    # A closed cycle raised the account by $11; an open position is $22 under water.
+    connector.get_account_value.return_value = 539.0
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0,
+                                                    "unrealized_pnl": -22.0}}
+    await grid.run_round()
+    assert grid.size_usd == pytest.approx(51.0)      # (539 + 22) / 11
+
+
+async def test_an_unreadable_account_value_skips_the_round(grid, connector):
+    await grid.start()
+    connector.get_account_value.side_effect = RuntimeError("down")
+    assert await grid.run_round() is None
+    connector.place_limit.assert_not_called()
+
+
+async def test_the_budget_follows_the_size(grid, connector):
+    await grid.start()
+    await grid.run_round()
+    # $50 a line x 1x x 10 cells
+    assert _sample("grid_budget_usd", coin="BTC") == pytest.approx(500.0)
 
 
 # ── a round ────────────────────────────────────────────────────────────────────
@@ -256,7 +281,7 @@ async def test_realised_pnl_comes_from_the_exchange_stop_included(grid, connecto
 async def test_the_price_and_the_bounds_are_exported(config, connector, alerter, clock):
     from src.strategy import StaticGrid
     config["coin"] = "xyz:XYZ100"
-    g = StaticGrid("NDX", config, strategy_allocation_pct=100, start_balance=550,
+    g = StaticGrid("NDX", config,
                    connector=connector, alerter=alerter, clock=clock)
     connector.get_open_orders.return_value = []
     connector.get_positions.return_value = {"xyz:XYZ100": {"szi": 0.5, "entry_px": 150.0}}
@@ -320,7 +345,7 @@ async def test_a_round_reads_the_position_of_its_own_dex_only(config, connector,
     from src.strategy import StaticGrid
     for coin, dex in (("BTC", ""), ("xyz:XYZ100", "xyz")):
         config["coin"] = coin
-        g = StaticGrid("G", dict(config), strategy_allocation_pct=100, start_balance=550,
+        g = StaticGrid("G", dict(config),
                        connector=connector, alerter=alerter, clock=clock)
         await g.start()
         connector.get_positions.reset_mock()
@@ -454,7 +479,7 @@ async def test_the_grid_decides_from_the_mark_price_not_the_mid(grid, connector)
 async def test_the_margin_check_reads_the_balance_of_the_coin_s_dex(config, connector, alerter, clock):
     from src.strategy import StaticGrid
     config["coin"] = "xyz:XYZ100"
-    g = StaticGrid("NDX", config, strategy_allocation_pct=100, start_balance=550,
+    g = StaticGrid("NDX", config,
                    connector=connector, alerter=alerter, clock=clock)
     await g.start()
     connector.get_account_value.assert_awaited_once_with(dex="xyz")
@@ -470,7 +495,7 @@ async def test_the_margin_check_on_the_default_dex(grid, connector):
 def _stop_grid(config, connector, alerter, clock, stop_loss=96.0):
     from src.strategy import StaticGrid
     config["stop_loss"] = stop_loss
-    return StaticGrid("BTC-11", config, strategy_allocation_pct=100, start_balance=550,
+    return StaticGrid("BTC-11", config,
                       connector=connector, alerter=alerter, clock=clock)
 
 

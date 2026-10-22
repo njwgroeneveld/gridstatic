@@ -15,7 +15,7 @@ from dataclasses import asdict
 from src import metrics
 from src.alert_throttle import OutsideGridThrottle
 from src.cloid import BUY, SELL, STOP, decode, encode, fingerprint
-from src.grid_math import calculate_levels, calculate_size_usd
+from src.grid_math import calculate_levels, realised_equity, size_per_line
 from src.reconcile import Place, Plan, TaggedFill, plan
 
 log = logging.getLogger(__name__)
@@ -32,9 +32,8 @@ def dex_of(coin: str) -> str:
 
 
 class StaticGrid:
-    def __init__(self, coin_key: str, config: dict, strategy_allocation_pct: float,
-                 start_balance: float, connector, alerter, *, interval: float = 30,
-                 lookback_hours: float = 72, clock=time.time) -> None:
+    def __init__(self, coin_key: str, config: dict, connector, alerter, *,
+                 interval: float = 30, lookback_hours: float = 72, clock=time.time) -> None:
         self.coin_key = coin_key
         self.config = config
         self.coin = config["coin"]
@@ -42,10 +41,9 @@ class StaticGrid:
         self.levels = calculate_levels(config["lower"], config["upper"], config["num_lines"])
         self.fp = fingerprint(self.coin, config["lower"], config["upper"],
                               config["num_lines"], self.leverage)
-        # Fixed per line, no compounding: the profit since the start is not
-        # something the exchange can tell once its fill history has rolled over.
-        self.size_usd = calculate_size_usd(start_balance, strategy_allocation_pct,
-                                           config["allocation_pct"], config["num_lines"])
+        # Margin per line. Set every round from the realised equity of the grid's
+        # dex (see _set_size), so profit is reinvested without a record of it.
+        self.size_usd: float | None = None
         # Optional. A reduce-only stop on the exchange at this price; see reconcile.
         self.stop_loss = float(config["stop_loss"]) if config.get("stop_loss") else None
         self.connector = connector
@@ -79,8 +77,6 @@ class StaticGrid:
         for counter in (metrics.grid_realized_gain_usd, metrics.grid_realized_loss_usd,
                         metrics.grid_fees_usd):
             counter.labels(coin=self.coin)
-        metrics.grid_budget_usd.labels(coin=self.coin).set(
-            self.size_usd * self.leverage * (len(self.levels) - 1))
         metrics.grid_lower_bound.labels(coin=self.coin).set(self.levels[0])
         metrics.grid_upper_bound.labels(coin=self.coin).set(self.levels[-1])
         if self.stop_loss is not None:
@@ -88,6 +84,12 @@ class StaticGrid:
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)
+
+    def _set_size(self, equity: float) -> None:
+        self.size_usd = size_per_line(equity, self.config["allocation_pct"],
+                                      self.config["num_lines"])
+        metrics.grid_budget_usd.labels(coin=self.coin).set(
+            self.size_usd * self.leverage * (len(self.levels) - 1))
 
     def _label(self) -> dict:
         lev = int(self.leverage) if self.leverage.is_integer() else self.leverage
@@ -106,26 +108,32 @@ class StaticGrid:
             await self._tie(fills, limit=None)
         except Exception as e:
             log.warning(f"[{self.coin_key}] warming the fill cache failed: {e}")
-        await self._check_margin()
+        await self._check_size()
+        size = f"${self.size_usd} per line now" if self.size_usd is not None else "size unread"
         log.info(f"[{self.coin_key}] started: {len(self.levels)} lines "
-                 f"{self.levels[0]}-{self.levels[-1]}, ${self.size_usd} per line, "
-                 f"{self.leverage:g}x")
+                 f"{self.levels[0]}-{self.levels[-1]}, {size}, {self.leverage:g}x, "
+                 f"{self.config['allocation_pct']:g}% of its dex")
 
-    async def _check_margin(self) -> None:
-        """Warn, not refuse: a grid may be set larger than what is free right now."""
+    async def _check_size(self) -> None:
+        """Warn, not refuse: orders under the exchange's minimum leave cells empty
+        until the dex holds more -- not a reason to stop the grid."""
+        dex = dex_of(self.coin)
         try:
-            price = await self.connector.get_price(self.coin)
             # A HIP-3 dex keeps a balance of its own; that is the one that pays.
-            value = await self.connector.get_account_value(dex=dex_of(self.coin))
+            value, positions = await asyncio.gather(
+                self.connector.get_account_value(dex=dex),
+                self.connector.get_positions(dex=dex))
         except Exception as e:
-            log.warning(f"[{self.coin_key}] margin check skipped: {e}")
+            log.warning(f"[{self.coin_key}] size check skipped: {e}")
             return
-        cells_below = sum(1 for p in self.levels[:-1] if p < price)
-        needed = self.size_usd * cells_below
-        if value < needed:
-            msg = (f"{self.coin_key}: buying every line below {price:g} needs ${needed:,.0f} "
-                   f"margin; the account holds ${value:,.0f}. Orders will be refused once it "
-                   f"runs out -- lower startBalance or add funds.")
+        equity = realised_equity(value, positions)
+        self._set_size(equity)
+        order = self.size_usd * self.leverage
+        if order < MIN_NOTIONAL:
+            msg = (f"{self.coin_key}: ${order:.2f} per order -- {self.config['allocation_pct']:g}% "
+                   f"of ${equity:,.0f} realised equity over {self.config['num_lines']} lines -- "
+                   f"is under Hyperliquid's ${MIN_NOTIONAL:g} minimum. Cells stay empty until "
+                   f"the dex holds more: add funds, raise allocation_pct or use fewer lines.")
             log.warning(msg)
             await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
 
@@ -178,9 +186,13 @@ class StaticGrid:
             orders, price = await asyncio.gather(
                 self.connector.get_open_orders(self.coin),
                 self.connector.get_price(self.coin))
-            positions, fills = await asyncio.gather(
+            positions, fills, value = await asyncio.gather(
                 self.connector.get_positions(dex=dex_of(self.coin)),
-                self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms))
+                self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms),
+                self.connector.get_account_value(dex=dex_of(self.coin)))
+            # Sized every round: realised equity moves with closed profit, not with
+            # the price of the open position. Orders already resting keep their size.
+            self._set_size(realised_equity(value, positions))
         except Exception as e:
             # An exchange that cannot be read is never an empty exchange: act on
             # nothing until it answers again.
