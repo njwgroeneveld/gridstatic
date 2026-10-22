@@ -217,7 +217,7 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
             out.places.append(Place(cell, BUY, px, sz, False))
         if too_small:
             out.alerts.append(f"buys on cells {too_small} are under the ${min_notional:g} "
-                              f"minimum -- raise startBalance or lower the line count")
+                              f"minimum -- add funds to the dex, raise allocation_pct or lower the line count")
 
     # ── What /status shows ────────────────────────────────────────────────────
     for cell in range(n_cells):

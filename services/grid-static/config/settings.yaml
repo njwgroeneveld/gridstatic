@@ -1,14 +1,11 @@
 connector_url: http://connector:8080
 alerter_url: http://telegram-alerter:8080
 
-strategy_allocation_pct: 80
-start_balance: 464
-
 coins:
   BTC-10:
     coin: BTC
     active: true
-    allocation_pct: 100
+    allocation_pct: 90
     upper: 83000
     lower: 75000
     num_lines: 10
