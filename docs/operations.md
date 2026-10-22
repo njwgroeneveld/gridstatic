@@ -133,12 +133,11 @@ hyperliquid:
   existingSecret: gridstatic-hyperliquid
 
 grid:
-  startBalance: 1000
   coins:
     BTC-20:
       coin: BTC
       active: true
-      allocationPct: 100
+      allocationPct: 90
       upper: 83000
       lower: 75000
       numLines: 20
@@ -158,7 +157,7 @@ helm install gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 kubectl -n gridstatic logs deploy/gridstatic-grid-static -f
 ```
 
-The bot should log `started: 20 lines 75000-83000, $40.0 per line, 1x`, followed by a `BUY` line
+The bot should log `started: 20 lines 75000-83000, $45.0 per line now, 1x, 90% of its dex` (with $1,000 on the default dex), followed by a `BUY` line
 for every cell below the price. If it logs `Refusing to start`, the message below it names the
 setting it will not trade with.
 
@@ -173,55 +172,50 @@ All settings live in your values file. The full list with comments is in
 
 ```yaml
 grid:
-  strategyAllocationPct: 80       # share of startBalance available to all grids
-  startBalance: 1000              # basis for order sizing -- see below
   roundIntervalSeconds: 30        # how often the bot reads the exchange and repairs the grid
   fillLookbackHours: 72           # how far back it looks for coin a cell bought but did not sell
   coins:
     SOL-20:                       # free-form label, used in logs and alerts
       coin: SOL                   # Hyperliquid symbol
       active: true
-      allocationPct: 100          # this grid's share of the strategy allocation
+      allocationPct: 90           # share of its dex's realised equity
       lower: 93
       upper: 107
       numLines: 20
       leverage: 1
 ```
 
-**Order size per line** is fixed:
+**Order size per line** follows the money on the grid's dex, every round:
 
 ```
-startBalance × strategyAllocationPct% × allocationPct% ÷ numLines
+(account value of the dex − unrealised P&L on it) × allocationPct% ÷ numLines
 ```
 
-With the defaults above, 1000 × 80% × 100% ÷ 20 = **$40 per line**, and up to $760 in the
-market if all 19 cells fill. The size does not grow with profit: the profit since the start is
-not something the exchange can report once its fill history rolls over, and the bot keeps no
-record of its own.
+With $1,000 on the default dex, 90% and 20 lines that is **$45 per line**. Closed profit raises
+it, a closed loss lowers it; the price of an open position does not, so the grid does not shrink
+while it buys its way down. Orders already resting keep their size.
 
-A grid can set its own `startBalance`, which then overrides the global one for that grid. That
-fits grids that margin from different balances — BTC from your regular perps account, a HIP-3
-market from its own dex:
+**Every perp dex has its own balance.** BTC trades on the default dex (which shares with spot
+USDC), `xyz:XYZ100` on the `xyz` dex. Each grid grows with the profit on its own dex. To shift
+capital between grids on different dexes, transfer USDC between the dexes yourself; the next
+round sizes from it. Grids on the same dex share it: their `allocationPct` may add up to at most
+100 — keep it near 90 to leave room for fees and funding.
 
-```yaml
-    NDX-20:
-      coin: "xyz:XYZ100"
-      startBalance: 500            # this grid only; the others keep grid.startBalance
-```
-
-`startBalance` is not read from your account. The bot deliberately does not size from your
-account value: that value moves with unrealised losses, so lines would shrink exactly while the
-grid is buying its way down. At startup it compares what a full grid needs with your account
-value and warns if the account cannot carry it.
+**Adding a grid** never needs a sale: the other grids keep their fingerprint, orders, positions
+and stops; the upgrade only restarts grid-static for a few seconds. On a shared dex, lower the
+other grids' `allocationPct` first if the total would pass 100 — that only makes their next buys
+smaller.
 
 **The bot refuses to start** — with a message that names the problem — when:
 
 | | why |
 |---|---|
-| an order would be under $10 (leverage counts) | Hyperliquid rejects it, and the cell would stay empty |
 | two grids trade the same coin | the exchange keeps one position per coin; two grids cannot tell theirs apart |
 | a grid says `shadow: true` | shadow mode is gone; starting would place real orders for a grid you believe is simulated |
-| `startBalance` is missing | it sizes every order; there is no safe default |
+| `startBalance` or `strategyAllocationPct` is set | they were removed; silently ignoring them would leave you believing they still size the orders |
+| the grids on one dex use more than 100% | they would size orders from money that is not there |
+
+An order under $10 no longer stops the bot: the size depends on the money on the dex, so it warns at startup and leaves those cells empty until the dex holds more.
 
 `grid.coins` has no default: the chart refuses to install without an active grid. That is on
 purpose — Helm merges maps, so a default grid would quietly run next to the ones in your file.
@@ -251,7 +245,7 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 > carries a fingerprint of exactly those five settings. After the change, the old grid's orders
 > carry a different fingerprint: the bot leaves them alone, but it also holds — its position no
 > longer adds up. Cancel the old orders and close or keep the old position deliberately before
-> you change them. Changing `allocationPct` or `startBalance` is safe; it applies to new orders.
+> you change them. Changing `allocationPct` is safe; it applies to new orders.
 
 ---
 

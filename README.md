@@ -49,6 +49,9 @@ line, sell on the upper. A filled buy gets a sell; a filled sell gets its buy ba
 
 Five lines make four cells. Buys rest only below the price; the top line has no cell above it.
 
+Each buy is sized from the grid's share of the realised equity on its dex, every round — so
+profit is reinvested without the bot keeping a record of it.
+
 ```mermaid
 flowchart LR
     R[read orders, position,<br/>price, fills] --> T[tie fills to cells<br/>via the order id]

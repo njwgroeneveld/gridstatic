@@ -154,17 +154,21 @@ separate code path; it is the next round.
 
 ## The strategy
 
-### Order size is fixed
+### Order size follows realised equity
 
-The size per line is `startBalance × strategyAllocationPct × allocationPct ÷ lines`, and it does
-not grow with profit. Growing it needs the realised profit since the start, which the exchange
-cannot report once its fill history rolls over — it keeps the last 10,000 fills — and the bot
-keeps no record to add it up.
+The margin per line is set every round:
 
-It is deliberately not derived from the account value either. That value moves with unrealised
-P&L, so lines would shrink exactly while the grid is buying its way down, and grow again as it
-sells — the opposite of what a grid needs. At startup the bot compares what a full grid needs
-with the account value and warns if it cannot be carried.
+    realised equity = account value of the grid's dex − unrealised P&L of every position on it
+    size per line   = realised equity × allocationPct ÷ lines
+
+Realised equity moves with closed profit and loss, fees, funding, deposits and withdrawals — not
+with the price of an open position. So profit is reinvested without the bot keeping a record of
+it, and the lines do not shrink while the grid buys its way down, which the plain account value
+would do. Orders already resting keep their size; only new buys use the new one.
+
+Each perp dex keeps its own balance, so each grid grows with the profit on its own dex. Grids on
+one dex share it through `allocationPct`, which may add up to at most 100 per dex. The bot never
+moves money between dexes; a person does, and the next round sizes from it.
 
 ### One buy and one sell per cell
 
@@ -232,10 +236,12 @@ with such a configuration.
 
 ### Refusing to start
 
-The bot refuses a configuration it must not trade with, and names the problem: an order under
-the exchange's $10 minimum, two grids on one coin, a missing `startBalance`, or a grid that still
+The bot refuses a configuration it must not trade with, and names the problem: two grids on one
+coin, a removed `startBalance`, grids on one dex using more than 100% of it, or a grid that still
 says `shadow: true` — which would otherwise place real orders for someone who believes they are
-simulating. Refusing costs nothing; trading on a wrong assumption costs money.
+simulating. Refusing costs nothing; trading on a wrong assumption costs money. An order under the
+exchange's $10 minimum does not block starting: the size depends on the money on the dex, so the
+bot warns instead (see `operations.md`).
 
 ---
 
