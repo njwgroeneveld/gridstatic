@@ -10,8 +10,7 @@ from prometheus_client import make_asgi_app
 
 from shared.connector_client import ConnectorClient
 from shared.alerter_client import AlerterClient
-from src.grid_math import calculate_size_usd
-from src.strategy import MIN_NOTIONAL, StaticGrid
+from src.strategy import StaticGrid, dex_of
 
 log = logging.getLogger("grid-static")
 _grids: list[StaticGrid] = []
@@ -27,15 +26,23 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _validate(cfg: dict) -> tuple[list[tuple[str, dict, float]], list[str]]:
-    """The grids to run, with their start balance, and the entries skipped.
+_REMOVED = ("start_balance", "strategy_allocation_pct")
+
+
+def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
+    """The grids to run and the entries skipped.
 
     Raises ConfigError for anything that must not trade: refusing to start is
     loud and costs nothing, trading on a wrong assumption costs money."""
     errors, grids, skipped = [], [], []
-    default_balance = cfg.get("start_balance")
-    pct = cfg.get("strategy_allocation_pct", 100)
     owner_of: dict[str, str] = {}
+    share_of_dex: dict[str, float] = {}
+
+    for key in _REMOVED:
+        if key in cfg:
+            errors.append(f"{key} was removed: every grid now sizes its orders from the "
+                          f"realised equity of its dex. Remove it; set each grid's "
+                          f"allocation_pct to the share of its dex it may use.")
 
     for key, c in (cfg.get("coins") or {}).items():
         if not c.get("active"):
@@ -53,6 +60,10 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict, float]], list[str]]:
             # someone who believes they are simulating.
             errors.append(f"{key}: shadow mode was removed. Test on testnet instead "
                           f"(hyperliquid.testnet: true) and remove `shadow` from the grid.")
+        for removed in _REMOVED:
+            if removed in c:
+                errors.append(f"{key}: {removed} was removed: the grid sizes its orders from "
+                              f"the realised equity of its dex. Remove it from the grid.")
         coin = c["coin"]
         if coin in owner_of:
             errors.append(f"{key} and {owner_of[coin]} both trade {coin}. One grid per coin: "
@@ -71,17 +82,20 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict, float]], list[str]]:
                 errors.append(f"{key}: stop_loss {stop!r} must be a price between 0 and the "
                               f"grid's lower bound {c['lower']}. Above it, the stop would close "
                               f"positions the grid is meant to hold.")
-        balance = c.get("start_balance", default_balance)
-        if balance is None:
-            errors.append(f"{key}: no start_balance. It sizes every order of a live grid; "
-                          f"there is no safe default.")
+        pct = c.get("allocation_pct")
+        if not isinstance(pct, (int, float)) or isinstance(pct, bool) or not 0 < pct <= 100:
+            errors.append(f"{key}: allocation_pct {pct!r} must be a number above 0 and at most "
+                          f"100: the share of its dex's realised equity this grid may use.")
             continue
-        size = calculate_size_usd(balance, pct, c["allocation_pct"], c["num_lines"])
-        notional = size * float(c.get("leverage", 1))
-        if notional < MIN_NOTIONAL:
-            errors.append(f"{key}: ${notional:.2f} per order is under Hyperliquid's "
-                          f"${MIN_NOTIONAL:g} minimum. Raise start_balance or use fewer lines.")
-        grids.append((key, c, balance))
+        dex = dex_of(coin)
+        share_of_dex[dex] = share_of_dex.get(dex, 0.0) + pct
+        grids.append((key, c))
+
+    for dex, total in share_of_dex.items():
+        if total > 100:
+            name = f"dex '{dex}'" if dex else "the default dex"
+            errors.append(f"the grids on {name} use {total:g}% of its equity together; at most "
+                          f"100. Lower their allocation_pct.")
 
     if errors:
         raise ConfigError("\n".join(errors))
@@ -118,9 +132,8 @@ async def lifespan(_app: FastAPI):
 
     interval = cfg.get("round_interval_seconds", cfg.get("fills_poll_interval_seconds", 30))
     lookback = cfg.get("fill_lookback_hours", 72)
-    for key, c, balance in grids:
-        _grids.append(StaticGrid(key, c, cfg.get("strategy_allocation_pct", 100), balance,
-                                 connector, alerter, interval=interval,
+    for key, c in grids:
+        _grids.append(StaticGrid(key, c, connector, alerter, interval=interval,
                                  lookback_hours=lookback))
 
     await _wait_for("connector", connector.get_mids)

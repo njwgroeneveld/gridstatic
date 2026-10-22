@@ -12,8 +12,7 @@ def _grid(**over):
 
 
 def _cfg(coins, **top):
-    cfg = {"connector_url": "http://c:8080", "alerter_url": "http://a:8080",
-           "start_balance": 1000, "strategy_allocation_pct": 80, "coins": coins}
+    cfg = {"connector_url": "http://c:8080", "alerter_url": "http://a:8080", "coins": coins}
     cfg.update(top)
     return cfg
 
@@ -22,7 +21,7 @@ def _cfg(coins, **top):
 
 def test_a_valid_config_passes():
     grids, skipped = m._validate(_cfg({"BTC-20": _grid()}))
-    assert [k for k, _, _ in grids] == ["BTC-20"]
+    assert [k for k, _ in grids] == ["BTC-20"]
     assert skipped == []
 
 
@@ -42,27 +41,35 @@ def test_two_grids_on_one_coin_refuse_to_start():
         m._validate(_cfg({"BTC-20": _grid(), "BTC-10": _grid(num_lines=10)}))
 
 
-def test_an_order_under_the_minimum_refuses_to_start():
-    # $100 * 80% / 20 lines = $4 per line, at 1x a $4 order.
-    with pytest.raises(m.ConfigError, match="minimum"):
-        m._validate(_cfg({"BTC-20": _grid(leverage=1)}, start_balance=100))
+@pytest.mark.parametrize("key", ["start_balance", "strategy_allocation_pct"])
+def test_a_removed_sizing_setting_refuses_to_start(key):
+    # Silently ignoring it would leave you believing it still sizes the orders.
+    with pytest.raises(m.ConfigError, match=f"{key} was removed"):
+        m._validate(_cfg({"BTC-20": _grid()}, **{key: 1000}))
 
 
-def test_leverage_counts_toward_the_minimum():
-    # $4 a line at 3x is a $12 order.
-    m._validate(_cfg({"BTC-20": _grid(leverage=3)}, start_balance=100))
+def test_a_removed_setting_on_a_grid_refuses_to_start():
+    with pytest.raises(m.ConfigError, match="start_balance was removed"):
+        m._validate(_cfg({"BTC-20": _grid(start_balance=500)}))
 
 
-def test_a_missing_start_balance_refuses_to_start():
-    cfg = _cfg({"BTC-20": _grid()})
-    del cfg["start_balance"]
-    with pytest.raises(m.ConfigError, match="no start_balance"):
-        m._validate(cfg)
+@pytest.mark.parametrize("pct", [0, -5, 101, None, "90"])
+def test_allocation_pct_must_be_between_0_and_100(pct):
+    with pytest.raises(m.ConfigError, match="allocation_pct"):
+        m._validate(_cfg({"BTC-20": _grid(allocation_pct=pct)}))
 
 
-def test_a_start_balance_per_grid_wins():
-    grids, _ = m._validate(_cfg({"BTC-20": _grid(start_balance=5000)}))
-    assert grids[0][2] == 5000
+def test_grids_on_one_dex_may_not_use_more_than_all_of_it():
+    with pytest.raises(m.ConfigError, match="default dex.*110"):
+        m._validate(_cfg({"BTC-20": _grid(allocation_pct=60),
+                          "ETH-20": _grid(coin="ETH", allocation_pct=50)}))
+
+
+def test_grids_on_different_dexes_each_have_their_own_100():
+    grids, _ = m._validate(_cfg({"BTC-20": _grid(allocation_pct=90),
+                                 "NDX-20": _grid(coin="xyz:XYZ100", allocation_pct=90,
+                                                 upper=32000, lower=29000)}))
+    assert [k for k, _ in grids] == ["BTC-20", "NDX-20"]
 
 
 def test_every_problem_is_reported_at_once():
@@ -73,13 +80,13 @@ def test_every_problem_is_reported_at_once():
 
 def test_inactive_grids_are_left_out():
     grids, _ = m._validate(_cfg({"BTC-20": _grid(), "ETH-20": _grid(coin="ETH", active=False)}))
-    assert [k for k, _, _ in grids] == ["BTC-20"]
+    assert [k for k, _ in grids] == ["BTC-20"]
 
 
 def test_other_strategy_types_are_skipped_not_fatal():
     grids, skipped = m._validate(_cfg({"BTC-20": _grid(),
                                        "SOL-T": _grid(coin="SOL", strategy_type="TRAILING")}))
-    assert [k for k, _, _ in grids] == ["BTC-20"]
+    assert [k for k, _ in grids] == ["BTC-20"]
     assert "TRAILING" in skipped[0]
 
 
@@ -121,7 +128,6 @@ def _settings(tmp_path, monkeypatch, text):
 _VALID = (
     "connector_url: http://c:8080\n"
     "alerter_url: http://a:8080\n"
-    "start_balance: 1000\n"
     "coins:\n"
     "  BTC-20:\n"
     "    coin: BTC\n"
@@ -201,5 +207,5 @@ def test_an_invalid_leverage_refuses_to_start(lev):
 def test_leverage_left_out_means_1x():
     g = _grid()
     del g["leverage"]
-    grids, _ = m._validate(_cfg({"BTC-20": g}, start_balance=1000))
+    grids, _ = m._validate(_cfg({"BTC-20": g}))
     assert grids[0][0] == "BTC-20"
