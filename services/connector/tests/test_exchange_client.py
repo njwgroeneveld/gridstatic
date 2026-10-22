@@ -24,7 +24,7 @@ def test_get_open_positions_excludes_zero_szi():
     }
     result = client.get_open_positions()
     assert "BTC" in result
-    assert result["BTC"] == {"szi": 0.01, "entry_px": 103000.0}
+    assert result["BTC"] == {"szi": 0.01, "entry_px": 103000.0, "unrealized_pnl": 0.0}
     assert "ETH" not in result
 
 
@@ -387,3 +387,10 @@ def test_set_leverage_accepts_ok():
     client._exchange.update_leverage.return_value = {"status": "ok", "response": {"type": "default"}}
     client.set_leverage("BTC", 3)
     client._exchange.update_leverage.assert_called_once_with(3, "BTC", is_cross=False)
+
+def test_a_position_carries_its_unrealised_pnl():
+    # The grid sizes its orders from realised equity: account value minus this.
+    client = _make_client()
+    client._info.user_state.return_value = {"assetPositions": [
+        {"position": {"coin": "BTC", "szi": "0.002", "entryPx": "83000", "unrealizedPnl": "-1.25"}}]}
+    assert client.get_open_positions(dex="")["BTC"]["unrealized_pnl"] == -1.25

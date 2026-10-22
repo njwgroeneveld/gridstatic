@@ -96,8 +96,13 @@ class ExchangeClient:
                 coin = p.get("coin")
                 szi = float(p.get("szi") or 0)
                 if coin and abs(szi) > 0:
-                    result[_full_name(coin, dex)] = {"szi": szi,
-                                                     "entry_px": float(p.get("entryPx") or 0)}
+                    result[_full_name(coin, dex)] = {
+                        "szi": szi,
+                        "entry_px": float(p.get("entryPx") or 0),
+                        # grid-static sizes its orders from realised equity: the account
+                        # value minus this, so a price move does not resize the grid.
+                        "unrealized_pnl": float(p.get("unrealizedPnl") or 0),
+                    }
         return result
 
     def get_open_orders(self, coin: str) -> list[dict]:
