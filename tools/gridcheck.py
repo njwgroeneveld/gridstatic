@@ -23,7 +23,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "grid-static"))
 from src.cloid import BUY, SELL, STOP, decode, fingerprint  # noqa: E402
-from src.grid_math import calculate_levels, calculate_size_usd  # noqa: E402
+from src.grid_math import calculate_levels, realised_equity, size_per_line  # noqa: E402
 from src.reconcile import TaggedFill, plan  # noqa: E402
 
 INFO_URL = {"testnet": "https://api.hyperliquid-testnet.xyz/info",
@@ -78,9 +78,6 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
     leverage = float(c.get("leverage", 1))
     levels = calculate_levels(c["lower"], c["upper"], c["num_lines"])
     fp = fingerprint(coin, c["lower"], c["upper"], c["num_lines"], leverage)
-    balance = c.get("start_balance", cfg.get("start_balance"))
-    size_usd = calculate_size_usd(balance, cfg.get("strategy_allocation_pct", 100),
-                                  c["allocation_pct"], c["num_lines"])
 
     dex = coin.split(":", 1)[0] if ":" in coin else ""
 
@@ -95,6 +92,17 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
     orders = [o for o in info(url, {"type": "frontendOpenOrders", "user": address, "dex": dex})
               if full(o.get("coin", "")) == coin]
     state = info(url, {"type": "clearinghouseState", "user": address, "dex": dex})
+    # The same sizing as the bot: realised equity of the dex (the default dex shares
+    # with spot USDC), over this grid's share and lines.
+    value = float(state.get("marginSummary", {}).get("accountValue", 0.0))
+    if not dex:
+        spot = info(url, {"type": "spotClearinghouseState", "user": address})
+        usdc = next((b for b in spot.get("balances", []) if b.get("coin") == "USDC"), {})
+        value += float(usdc.get("total", 0.0)) - float(usdc.get("hold", 0.0))
+    unrealised = {p["position"]["coin"]: {"unrealized_pnl": float(p["position"].get("unrealizedPnl") or 0)}
+                  for p in state.get("assetPositions", [])}
+    size_usd = size_per_line(realised_equity(value, unrealised), c["allocation_pct"], c["num_lines"])
+    print(f"   size per line: ${size_usd} ({c['allocation_pct']}% of its dex)")
     position = next((float(p["position"]["szi"]) for p in state.get("assetPositions", [])
                      if full(p["position"]["coin"]) == coin), 0.0)
     since = int((time.time() - lookback_h * 3600) * 1000)
