@@ -8,17 +8,15 @@ def calculate_levels(lower: float, upper: float, num_lines: int) -> list[float]:
     return [round(level, 2) for level in levels]
 
 
-def calculate_size_usd(balance: float, strategy_pct: float,
-                       coin_pct: float, num_lines: int) -> float:
-    """Calculate order size in USD per level.
+def realised_equity(account_value: float, positions: dict[str, dict]) -> float:
+    """The account value of a dex minus the unrealised P&L of every position on it.
 
-    Args:
-        balance: Total account balance in USD
-        strategy_pct: Percentage of balance allocated to strategy (0-100)
-        coin_pct: Percentage of strategy allocation for this coin (0-100)
-        num_lines: Number of grid levels
+    It moves with closed profit and loss, fees, funding, deposits and withdrawals --
+    not with the price of an open position. Sizing from it reinvests profit without
+    a record, and does not shrink the lines while the grid buys its way down."""
+    return account_value - sum(float(p.get("unrealized_pnl", 0.0)) for p in positions.values())
 
-    Returns:
-        Order size in USD per level
-    """
-    return round((balance * strategy_pct / 100.0 * coin_pct / 100.0) / num_lines, 2)
+
+def size_per_line(equity: float, allocation_pct: float, num_lines: int) -> float:
+    """Margin per line in USD: the grid's share of its dex's realised equity, over its lines."""
+    return max(0.0, round(equity * allocation_pct / 100.0 / num_lines, 2))
