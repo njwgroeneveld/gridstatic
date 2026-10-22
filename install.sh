@@ -312,14 +312,13 @@ hyperliquid:
 
 ${TG_VALUES}
 grid:
-  # Fixed size per line: startBalance x 80% / lines. With 20 lines, 1000 means
-  # \$40 per line. Hyperliquid refuses orders under \$10.
-  startBalance: 1000
+  # Each grid uses allocationPct% of the realised equity on its dex, over its
+  # lines, set every round. Hyperliquid refuses orders under \$10 (leverage counts).
   coins:
     BTC-20:
       coin: BTC
       active: true
-      allocationPct: 100
+      allocationPct: 90
       upper: 83000
       lower: 75000
       numLines: 20

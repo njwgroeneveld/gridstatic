@@ -38,12 +38,11 @@ telegram:
   existingSecret: ""
 
 grid:
-  strategyAllocationPct: 80
-  # Basis for order sizing: every line gets startBalance x allocation / lines,
-  # fixed -- it does not grow with profit. With 20 lines and 80% allocation, 1000
-  # means $40 per line. Hyperliquid refuses orders under $10 (leverage counts),
-  # and the bot refuses to start with a grid that would place them.
-  startBalance: 1000
+  # Order size per line: allocationPct% of the realised equity on the grid's dex
+  # (account value minus unrealised P&L), over its lines -- set every round, so
+  # profit is reinvested. Each perp dex has its own balance; grids on one dex
+  # share it, and their allocationPct may add up to at most 100. Hyperliquid
+  # refuses orders under $10 (leverage counts).
   # How often the bot reads the exchange and repairs the grid.
   roundIntervalSeconds: 30
   # How far back the bot looks at fills to find coin a cell has bought but not
@@ -58,7 +57,7 @@ grid:
   #   BTC-20:
   #     coin: BTC
   #     active: true
-  #     allocationPct: 100
+  #     allocationPct: 90
   #     upper: 83000
   #     lower: 75000
   #     numLines: 20
@@ -67,7 +66,7 @@ grid:
   #   NDX-20:
   #     coin: "xyz:XYZ100"      # HIP-3 market: "dex:NAME", quoted
   #     active: true
-  #     allocationPct: 100
+  #     allocationPct: 90
   #     upper: 32000
   #     lower: 29000
   #     numLines: 20
