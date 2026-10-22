@@ -15,7 +15,7 @@ from dataclasses import asdict
 from src import metrics
 from src.alert_throttle import OutsideGridThrottle
 from src.cloid import BUY, SELL, STOP, decode, encode, fingerprint
-from src.grid_math import calculate_levels, realised_equity, size_per_line
+from src.grid_math import calculate_levels, capped_equity, realised_equity, size_per_line
 from src.reconcile import Place, Plan, TaggedFill, plan
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,11 @@ class StaticGrid:
         # dex (see _set_size), so profit is reinvested without a record of it.
         self.size_usd: float | None = None
         self.equity_usd: float | None = None   # the realised equity the size came from
+        # Optional ceiling on the equity it sizes from; None means no limit.
+        cap = config.get("max_equity_usd")
+        self.max_equity_usd = float(cap) if cap is not None else None
+        self.capped = False
+        self._cap_reached = False                # announce once, on reaching the cap
         # Optional. A reduce-only stop on the exchange at this price; see reconcile.
         self.stop_loss = float(config["stop_loss"]) if config.get("stop_loss") else None
         self.connector = connector
@@ -88,10 +93,25 @@ class StaticGrid:
 
     def _set_size(self, equity: float) -> None:
         self.equity_usd = round(equity, 2)
-        self.size_usd = size_per_line(equity, self.config["allocation_pct"],
-                                      self.config["num_lines"])
+        was_capped = self.capped
+        self.capped = self.max_equity_usd is not None and equity > self.max_equity_usd
+        if self.capped and not was_capped:
+            self._cap_reached = True
+        self.size_usd = size_per_line(capped_equity(equity, self.max_equity_usd),
+                                      self.config["allocation_pct"], self.config["num_lines"])
         metrics.grid_budget_usd.labels(coin=self.coin).set(
             self.size_usd * self.leverage * (len(self.levels) - 1))
+
+    async def _announce_cap(self) -> None:
+        """Once, when the equity passes max_equity_usd: from here the grid stops growing."""
+        if not self._cap_reached:
+            return
+        self._cap_reached = False
+        msg = (f"{self.coin_key} reached its max_equity_usd of ${self.max_equity_usd:,.0f}: it "
+               f"sizes from that, while ${self.equity_usd:,.0f} is on its dex. Profit above it "
+               f"stays on the dex; raise max_equity_usd to let the grid grow.")
+        log.info(msg)
+        await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
 
     def _label(self) -> dict:
         lev = int(self.leverage) if self.leverage.is_integer() else self.leverage
@@ -111,6 +131,7 @@ class StaticGrid:
         except Exception as e:
             log.warning(f"[{self.coin_key}] warming the fill cache failed: {e}")
         await self._check_size()
+        await self._announce_cap()
         size = f"${self.size_usd} per line now" if self.size_usd is not None else "size unread"
         log.info(f"[{self.coin_key}] started: {len(self.levels)} lines "
                  f"{self.levels[0]}-{self.levels[-1]}, {size}, {self.leverage:g}x, "
@@ -208,6 +229,7 @@ class StaticGrid:
                                    key="unreadable")
             return None
         self._failed_reads = 0
+        await self._announce_cap()
 
         position = float((positions.get(self.coin) or {}).get("szi", 0.0))
         for o in orders:
@@ -491,6 +513,8 @@ class StaticGrid:
             "leverage": self._label()["leverage"],
             "size_usd": self.size_usd,
             "equity_usd": self.equity_usd,
+            "max_equity_usd": self.max_equity_usd,
+            "capped": self.capped,
             "stop_loss": self.stop_loss,
             "price": self.last_price,
             "position": self.last_position,

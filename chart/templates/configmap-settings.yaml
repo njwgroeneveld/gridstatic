@@ -38,6 +38,9 @@ data:
         {{- if $c.stopLoss }}
         stop_loss: {{ $c.stopLoss }}
         {{- end }}
+        {{- if $c.maxEquityUsd }}
+        max_equity_usd: {{ $c.maxEquityUsd }}
+        {{- end }}
     {{- end }}
 
     round_interval_seconds: {{ .Values.grid.roundIntervalSeconds }}

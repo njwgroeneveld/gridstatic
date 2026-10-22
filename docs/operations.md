@@ -179,6 +179,7 @@ grid:
       coin: SOL                   # Hyperliquid symbol
       active: true
       allocationPct: 90           # share of its dex's realised equity
+      maxEquityUsd: 500           # optional: size from at most this much; leave out for no limit
       lower: 93
       upper: 107
       numLines: 20
@@ -202,6 +203,12 @@ round sizes from it. **Every USDC on a dex counts as grid capital** — on the d
 spot USDC too — so do not keep money for something else on the same wallet. Grids on the
 same dex share it: their `allocationPct` may add up to at most
 100 — keep it near 90 to leave room for fees and funding.
+
+**A ceiling, if you want one.** `maxEquityUsd` caps the equity a grid sizes from: with $612 on
+the dex, a cap of 500, 90% and 10 lines, the size is $45 a line instead of $55. Money above it
+stays on the dex. Leave it out and the grid grows with everything on its dex. When the cap is
+reached the bot says so once, and `/status` shows `capped`; raise it to let the grid grow. It
+also limits what a stray deposit or a wrong reading can do to the empty cells after a restart.
 
 **Adding a grid** never needs a sale: the other grids keep their fingerprint, orders, positions
 and stops; the upgrade only restarts grid-static for a few seconds. On a shared dex, lower the

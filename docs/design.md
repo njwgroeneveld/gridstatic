@@ -168,7 +168,9 @@ would do. Orders already resting keep their size; only new buys use the new one.
 
 Each perp dex keeps its own balance, so each grid grows with the profit on its own dex. Grids on
 one dex share it through `allocationPct`, which may add up to at most 100 per dex. The bot never
-moves money between dexes; a person does, and the next round sizes from it.
+moves money between dexes; a person does, and the next round sizes from it. An optional
+`maxEquityUsd` per grid caps the equity it sizes from, so a deposit meant for something else, or
+one wrong reading, cannot blow up the buys of every empty cell at once.
 
 ### One buy and one sell per cell
 

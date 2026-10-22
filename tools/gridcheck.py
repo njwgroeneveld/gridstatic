@@ -23,7 +23,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "grid-static"))
 from src.cloid import BUY, SELL, STOP, decode, fingerprint  # noqa: E402
-from src.grid_math import calculate_levels, realised_equity, size_per_line  # noqa: E402
+from src.grid_math import calculate_levels, capped_equity, realised_equity, size_per_line  # noqa: E402
 from src.reconcile import TaggedFill, plan  # noqa: E402
 
 INFO_URL = {"testnet": "https://api.hyperliquid-testnet.xyz/info",
@@ -101,7 +101,8 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
         value += float(usdc.get("total", 0.0)) - float(usdc.get("hold", 0.0))
     unrealised = {p["position"]["coin"]: {"unrealized_pnl": float(p["position"].get("unrealizedPnl") or 0)}
                   for p in state.get("assetPositions", [])}
-    size_usd = size_per_line(realised_equity(value, unrealised), c["allocation_pct"], c["num_lines"])
+    equity = capped_equity(realised_equity(value, unrealised), c.get("max_equity_usd"))
+    size_usd = size_per_line(equity, c["allocation_pct"], c["num_lines"])
     print(f"   size per line: ${size_usd} ({c['allocation_pct']}% of its dex)")
     position = next((float(p["position"]["szi"]) for p in state.get("assetPositions", [])
                      if full(p["position"]["coin"]) == coin), 0.0)

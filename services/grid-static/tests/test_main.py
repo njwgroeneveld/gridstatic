@@ -209,3 +209,14 @@ def test_leverage_left_out_means_1x():
     del g["leverage"]
     grids, _ = m._validate(_cfg({"BTC-20": g}))
     assert grids[0][0] == "BTC-20"
+
+
+@pytest.mark.parametrize("cap", [0, -100, "500", True])
+def test_max_equity_usd_must_be_a_positive_number(cap):
+    with pytest.raises(m.ConfigError, match="max_equity_usd"):
+        m._validate(_cfg({"BTC-20": _grid(max_equity_usd=cap)}))
+
+
+def test_max_equity_usd_is_optional():
+    grids, _ = m._validate(_cfg({"BTC-20": _grid(max_equity_usd=500)}))
+    assert grids[0][1]["max_equity_usd"] == 500

@@ -644,3 +644,36 @@ async def test_a_sell_still_resting_is_not_announced_yet(grid, connector, alerte
                                         _fill(10, SELL, 0.20, 140, START_MS + 2000)]
     await grid.run_round()
     assert "trade_closed" not in _alert_types(alerter)
+
+
+# ── max_equity_usd ─────────────────────────────────────────────────────────────
+
+async def test_the_size_never_comes_from_more_than_max_equity(config, connector, alerter, clock):
+    from src.strategy import StaticGrid
+    config["max_equity_usd"] = 330          # $330 over 11 lines = $30 a line
+    g = StaticGrid("BTC-11", config, connector=connector, alerter=alerter, clock=clock)
+    await g.start()                          # the dex holds $550
+    assert g.size_usd == 30.0
+    assert g.equity_usd == 550.0 and g.status()["capped"] is True
+
+
+async def test_reaching_the_cap_is_announced_once(config, connector, alerter, clock):
+    from src.strategy import StaticGrid
+    config["max_equity_usd"] = 600
+    g = StaticGrid("BTC-11", config, connector=connector, alerter=alerter, clock=clock)
+    await g.start()                          # $550 < $600: not capped
+    connector.get_account_value.return_value = 700.0
+    await g.run_round()
+    await g.run_round()
+    capped = [c for c in alerter.send_alert.call_args_list
+              if "max_equity_usd" in c.args[1].get("message", "")]
+    assert len(capped) == 1
+    assert g.size_usd == pytest.approx(600 / 11, abs=0.01)
+
+
+async def test_without_a_cap_the_grid_is_never_capped(grid, connector):
+    await grid.start()
+    connector.get_account_value.return_value = 1_000_000.0
+    await grid.run_round()
+    assert grid.status()["capped"] is False
+    assert grid.status()["max_equity_usd"] is None

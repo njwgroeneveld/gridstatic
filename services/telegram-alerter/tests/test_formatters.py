@@ -162,3 +162,9 @@ def test_trade_closed_shows_the_size():
                        {"coin": "BTC", "buy_price": 87000, "sell_price": 88000,
                         "size": 0.00092, "profit_usd": 0.85})
     assert "| 0.00092" in msg and "+$0.85" in msg
+
+
+def test_status_shows_a_capped_grid():
+    text = format_grid_status([_grid(size_usd=45.0, equity_usd=612.0, max_equity_usd=500.0,
+                                     capped=True)])
+    assert "$45.00 per line (of $500, capped — $612 on the dex)" in text

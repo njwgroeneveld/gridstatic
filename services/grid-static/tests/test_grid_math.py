@@ -44,3 +44,14 @@ def test_size_per_line_is_the_grid_s_share_over_its_lines():
 
 def test_size_per_line_never_goes_below_zero():
     assert size_per_line(-50.0, allocation_pct=90, num_lines=10) == 0.0
+
+
+def test_capped_equity_without_a_cap_is_all_of_it():
+    from src.grid_math import capped_equity
+    assert capped_equity(612.0, None) == 612.0
+
+
+def test_capped_equity_never_exceeds_the_cap():
+    from src.grid_math import capped_equity
+    assert capped_equity(612.0, 500) == 500.0
+    assert capped_equity(414.0, 500) == 414.0

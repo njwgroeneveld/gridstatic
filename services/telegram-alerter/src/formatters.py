@@ -121,7 +121,11 @@ def format_grid_status(grids: list[dict]) -> str:
         equity = g.get("equity_usd")
         per_line = (f"${size:,.2f} per line" if size is not None else "size unread")
         if size is not None and equity is not None:
-            per_line += f" (of ${equity:,.0f})"
+            if g.get("capped"):
+                per_line += (f" (of ${g['max_equity_usd']:,.0f}, capped — "
+                             f"${equity:,.0f} on the dex)")
+            else:
+                per_line += f" (of ${equity:,.0f})"
         lines.append(f"${g['lower']:,.0f} ↔ ${g['upper']:,.0f} | {per_line}{stop}")
 
         if not g.get("cells"):

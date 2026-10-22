@@ -21,6 +21,12 @@ def realised_equity(account_value: float, positions: dict[str, dict]) -> float:
     return account_value - sum(float(p["unrealized_pnl"]) for p in positions.values())
 
 
+def capped_equity(equity: float, max_equity_usd: float | None) -> float:
+    """The equity a grid sizes from: all of it, or at most max_equity_usd when set.
+    Money above the cap stays on the dex; the grid only grows past it if you raise it."""
+    return equity if max_equity_usd is None else min(equity, float(max_equity_usd))
+
+
 def size_per_line(equity: float, allocation_pct: float, num_lines: int) -> float:
     """Margin per line in USD: the grid's share of its dex's realised equity, over its lines."""
     return max(0.0, round(equity * allocation_pct / 100.0 / num_lines, 2))

@@ -82,6 +82,11 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
                 errors.append(f"{key}: stop_loss {stop!r} must be a price between 0 and the "
                               f"grid's lower bound {c['lower']}. Above it, the stop would close "
                               f"positions the grid is meant to hold.")
+        cap = c.get("max_equity_usd")
+        if cap is not None and (not isinstance(cap, (int, float)) or isinstance(cap, bool)
+                                or cap <= 0):
+            errors.append(f"{key}: max_equity_usd {cap!r} must be a number above 0 -- the most "
+                          f"realised equity the grid sizes from -- or left out for no limit.")
         pct = c.get("allocation_pct")
         if not isinstance(pct, (int, float)) or isinstance(pct, bool) or not 0 < pct <= 100:
             errors.append(f"{key}: allocation_pct {pct!r} must be a number above 0 and at most "
