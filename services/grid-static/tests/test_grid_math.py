@@ -30,9 +30,11 @@ def test_realised_equity_without_positions_is_the_account_value():
     assert realised_equity(105.0, {}) == 105.0
 
 
-def test_a_position_without_the_field_counts_as_no_unrealised_pnl():
-    # An older connector does not send it yet; sizing then follows the account value.
-    assert realised_equity(100.0, {"BTC": {"szi": 0.1}}) == 100.0
+def test_a_position_without_the_field_is_unreadable():
+    # An older connector does not send it. Sizing from the plain account value would
+    # shrink the lines in a drawdown without anyone noticing; the round skips instead.
+    with pytest.raises(KeyError):
+        realised_equity(100.0, {"BTC": {"szi": 0.1}})
 
 
 def test_size_per_line_is_the_grid_s_share_over_its_lines():

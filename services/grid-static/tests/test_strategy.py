@@ -107,6 +107,26 @@ async def test_the_first_round_on_an_empty_book_places_the_buys(grid, connector)
     assert (3, BUY, 130.0, 0.38, False, True) in placed
 
 
+async def test_a_new_size_leaves_resting_buys_alone(grid, connector):
+    # Six buys rest at the $50 size. Twice the equity doubles the size, but the
+    # buys stay: only empty cells get the new size, nothing is cancelled.
+    await grid.start()
+    connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 3, 4, 5)
+    connector.get_account_value.return_value = 1100.0
+    await grid.run_round()
+    assert grid.size_usd == 100.0
+    connector.cancel_order.assert_not_called()
+    connector.place_limit.assert_not_called()
+
+
+async def test_a_position_without_unrealised_pnl_skips_the_round(grid, connector):
+    # A connector on an old image does not send the field.
+    await grid.start()
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    assert await grid.run_round() is None
+    connector.place_limit.assert_not_called()
+
+
 @pytest.mark.parametrize("unreadable", ["get_open_orders", "get_positions", "get_price", "get_fills"])
 async def test_an_unreadable_exchange_does_nothing(grid, connector, unreadable):
     # An exchange that cannot be read is never an empty exchange.
@@ -122,7 +142,7 @@ async def test_a_filled_buy_gets_a_reduce_only_sell(grid, connector):
     cloid3 = encode(grid.fp, 3, BUY)
     connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
     await grid.run_round()
     assert _placed(connector) == [(3, SELL, 140.0, 0.38, True, False)]
@@ -136,7 +156,7 @@ async def test_fills_of_orders_the_bot_placed_need_no_lookup(grid, connector):
     placed_oid = 500 + connector.place_limit.call_args_list.index(oid3)
     connector.get_order_status.reset_mock()
     connector.get_fills.return_value = [_fill(placed_oid, BUY, 0.38, 130, START_MS + 1000)]
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
     connector.place_limit.reset_mock()
     await grid.run_round()
@@ -148,7 +168,7 @@ async def test_a_fill_that_cannot_be_tied_puts_the_grid_on_hold(grid, connector,
     await grid.start()
     connector.get_order_status.side_effect = ConnectionError("down")
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
     plan = await grid.run_round()
     assert plan.hold is not None
@@ -172,7 +192,7 @@ async def test_cancels_go_first_and_a_failed_cancel_skips_its_replacement(grid, 
     await grid.start()
     small_sell = _book_order(grid, 3, SELL, 0.20, oid=300, ts=START_MS - 2000)
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5) + [small_sell]
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     cloid3 = encode(grid.fp, 3, BUY)
     connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
     connector.get_fills.return_value = [_fill(9, BUY, 0.20, 130, START_MS - 3000),
@@ -202,7 +222,7 @@ async def test_one_failed_order_does_not_stop_the_others(grid, connector):
 async def test_a_hold_is_reported_once_and_so_is_its_end(grid, connector, alerter):
     await grid.start()
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 3, 4, 5)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.5, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.5, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     await grid.run_round()
     await grid.run_round()
     connector.get_positions.return_value = {}
@@ -216,7 +236,7 @@ async def test_fills_from_before_the_start_are_not_announced(grid, connector, al
     cloid3 = encode(grid.fp, 3, BUY)
     connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
     connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS - 1000)]
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
     await grid.start()
     await grid.run_round()
@@ -284,7 +304,7 @@ async def test_the_price_and_the_bounds_are_exported(config, connector, alerter,
     g = StaticGrid("NDX", config,
                    connector=connector, alerter=alerter, clock=clock)
     connector.get_open_orders.return_value = []
-    connector.get_positions.return_value = {"xyz:XYZ100": {"szi": 0.5, "entry_px": 150.0}}
+    connector.get_positions.return_value = {"xyz:XYZ100": {"szi": 0.5, "entry_px": 150.0, "unrealized_pnl": 0.0}}
     await g.start()
     await g.run_round()
     assert _sample("grid_mark_price", coin="xyz:XYZ100") == 155.0
@@ -393,7 +413,7 @@ async def test_status_shows_a_new_sell_as_covering_the_cell(grid, connector):
     cloid3 = encode(grid.fp, 3, BUY)
     connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
     await grid.run_round()
     cell3 = grid.status()["cells"][3]
@@ -505,7 +525,7 @@ async def test_the_stop_goes_out_through_the_stop_route(config, connector, alert
     cloid3 = encode(g.fp, 3, BUY)
     connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "filled"}
     connector.get_open_orders.return_value = _resting_buys(g, 0, 1, 2, 4, 5)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000)]
     await g.run_round()
     kw = connector.place_stop.call_args.kwargs
@@ -521,7 +541,7 @@ async def test_being_stopped_out_and_resuming_are_announced(config, connector, a
     g = _stop_grid(config, connector, alerter, clock)
     await g.start()
     connector.get_open_orders.return_value = _resting_buys(g, 0, 1, 2, 3, 4)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.42, "entry_px": 120.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.42, "entry_px": 120.0, "unrealized_pnl": 0.0}}
     connector.get_price.return_value = 115.0
     await g.run_round()                                  # holding coin (on hold, no fills)
     connector.get_open_orders.return_value = []
@@ -541,7 +561,7 @@ async def test_being_stopped_out_and_resuming_are_announced(config, connector, a
 async def test_a_manual_close_inside_the_grid_is_not_a_stop(config, connector, alerter, clock):
     g = _stop_grid(config, connector, alerter, clock)
     await g.start()
-    connector.get_positions.return_value = {"BTC": {"szi": 0.42, "entry_px": 120.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.42, "entry_px": 120.0, "unrealized_pnl": 0.0}}
     await g.run_round()
     connector.get_positions.return_value = {}
     await g.run_round()                                  # flat at 155: not below the grid
@@ -576,14 +596,14 @@ async def test_a_buy_filled_in_pieces_is_announced_once_when_complete(grid, conn
     connector.get_order_status.return_value = {"oid": 9, "cloid": cloid3, "status": "open"}
     resting = _book_order(grid, 3, BUY, 0.14, oid=9, orig=0.38)
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5) + [resting]
-    connector.get_positions.return_value = {"BTC": {"szi": 0.24, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.24, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_fills.return_value = [_fill(9, BUY, 0.10, 130, START_MS + 1000),
                                         _fill(9, BUY, 0.14, 130, START_MS + 2000)]
     await grid.run_round()
     assert "buy_filled" not in _alert_types(alerter)          # still resting
 
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5)
-    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     connector.get_fills.return_value.append(_fill(9, BUY, 0.14, 130, START_MS + 3000))
     clock.ms += 30_000
     await grid.run_round()
@@ -618,7 +638,7 @@ async def test_a_sell_still_resting_is_not_announced_yet(grid, connector, alerte
                                                           "status": "open"}
     sell = _book_order(grid, 3, SELL, 0.18, oid=10, orig=0.38)
     connector.get_open_orders.return_value = _resting_buys(grid, 0, 1, 2, 4, 5) + [sell]
-    connector.get_positions.return_value = {"BTC": {"szi": 0.18, "entry_px": 130.0}}
+    connector.get_positions.return_value = {"BTC": {"szi": 0.18, "entry_px": 130.0, "unrealized_pnl": 0.0}}
     await grid.start()
     connector.get_fills.return_value = [_fill(9, BUY, 0.38, 130, START_MS + 1000),
                                         _fill(10, SELL, 0.20, 140, START_MS + 2000)]

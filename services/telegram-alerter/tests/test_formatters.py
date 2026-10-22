@@ -80,6 +80,17 @@ def _grid(**over):
     return g
 
 
+def test_status_survives_a_size_not_read_yet():
+    # Before the first readable round there is no size; /status must still answer.
+    text = format_grid_status([_grid(size_usd=None, cells=[])])
+    assert "size unread" in text
+
+
+def test_status_shows_the_equity_the_size_came_from():
+    text = format_grid_status([_grid(equity_usd=550.0)])
+    assert "$50.00 per line (of $550)" in text
+
+
 def test_status_shows_every_cell_top_down():
     text = format_grid_status([_grid()])
     rows = [l for l in text.splitlines() if l.strip().startswith(("📋", "💰", "⚠️", "▫️"))]

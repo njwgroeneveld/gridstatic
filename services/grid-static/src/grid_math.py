@@ -13,8 +13,12 @@ def realised_equity(account_value: float, positions: dict[str, dict]) -> float:
 
     It moves with closed profit and loss, fees, funding, deposits and withdrawals --
     not with the price of an open position. Sizing from it reinvests profit without
-    a record, and does not shrink the lines while the grid buys its way down."""
-    return account_value - sum(float(p.get("unrealized_pnl", 0.0)) for p in positions.values())
+    a record, and does not shrink the lines while the grid buys its way down.
+
+    A position without the field raises KeyError: a connector too old to send it
+    would otherwise size from the plain account value without anyone noticing,
+    and the round is better skipped."""
+    return account_value - sum(float(p["unrealized_pnl"]) for p in positions.values())
 
 
 def size_per_line(equity: float, allocation_pct: float, num_lines: int) -> float:

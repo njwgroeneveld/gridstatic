@@ -117,7 +117,12 @@ def format_grid_status(grids: list[dict]) -> str:
         lev_tag = f" {lev}x" if lev and lev > 1 else ""
         lines.append(f"\n<b>── {g['coin']} {g['num_lines']}L{lev_tag} ──</b>")
         stop = f" | stop ${g['stop_loss']:,.0f}" if g.get("stop_loss") else ""
-        lines.append(f"${g['lower']:,.0f} ↔ ${g['upper']:,.0f} | ${g['size_usd']:,.2f} per line{stop}")
+        size = g.get("size_usd")
+        equity = g.get("equity_usd")
+        per_line = (f"${size:,.2f} per line" if size is not None else "size unread")
+        if size is not None and equity is not None:
+            per_line += f" (of ${equity:,.0f})"
+        lines.append(f"${g['lower']:,.0f} ↔ ${g['upper']:,.0f} | {per_line}{stop}")
 
         if not g.get("cells"):
             lines.append("No round yet — the grid is starting up.")

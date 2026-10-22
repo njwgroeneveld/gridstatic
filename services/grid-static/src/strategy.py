@@ -44,6 +44,7 @@ class StaticGrid:
         # Margin per line. Set every round from the realised equity of the grid's
         # dex (see _set_size), so profit is reinvested without a record of it.
         self.size_usd: float | None = None
+        self.equity_usd: float | None = None   # the realised equity the size came from
         # Optional. A reduce-only stop on the exchange at this price; see reconcile.
         self.stop_loss = float(config["stop_loss"]) if config.get("stop_loss") else None
         self.connector = connector
@@ -86,6 +87,7 @@ class StaticGrid:
         return int(self._clock() * 1000)
 
     def _set_size(self, equity: float) -> None:
+        self.equity_usd = round(equity, 2)
         self.size_usd = size_per_line(equity, self.config["allocation_pct"],
                                       self.config["num_lines"])
         metrics.grid_budget_usd.labels(coin=self.coin).set(
@@ -488,6 +490,7 @@ class StaticGrid:
             "num_lines": self.config["num_lines"],
             "leverage": self._label()["leverage"],
             "size_usd": self.size_usd,
+            "equity_usd": self.equity_usd,
             "stop_loss": self.stop_loss,
             "price": self.last_price,
             "position": self.last_position,

@@ -198,7 +198,9 @@ while it buys its way down. Orders already resting keep their size.
 **Every perp dex has its own balance.** BTC trades on the default dex (which shares with spot
 USDC), `xyz:XYZ100` on the `xyz` dex. Each grid grows with the profit on its own dex. To shift
 capital between grids on different dexes, transfer USDC between the dexes yourself; the next
-round sizes from it. Grids on the same dex share it: their `allocationPct` may add up to at most
+round sizes from it. **Every USDC on a dex counts as grid capital** — on the default dex
+spot USDC too — so do not keep money for something else on the same wallet. Grids on the
+same dex share it: their `allocationPct` may add up to at most
 100 — keep it near 90 to leave room for fees and funding.
 
 **Adding a grid** never needs a sale: the other grids keep their fingerprint, orders, positions
