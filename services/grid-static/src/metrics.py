@@ -41,6 +41,12 @@ grid_stop_loss_price = Gauge(
     "grid_stop_loss_price", "Trigger price of the grid's stop; absent without one", ["coin"]
 )
 # Capital: both as position value, leverage included, so they compare directly.
+grid_realised_equity_usd = Gauge(
+    "grid_realised_equity_usd",
+    "Account value of the grid's dex minus the unrealised P&L on it: what the size is "
+    "computed from. One value per dex; take max by (dex) before adding dexes up",
+    ["coin", "dex"]
+)
 grid_budget_usd = Gauge(
     "grid_budget_usd", "Position value with every cell bought: size per line x leverage x cells",
     ["coin"]

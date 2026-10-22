@@ -93,6 +93,8 @@ class StaticGrid:
 
     def _set_size(self, equity: float) -> None:
         self.equity_usd = round(equity, 2)
+        metrics.grid_realised_equity_usd.labels(
+            coin=self.coin, dex=dex_of(self.coin) or "default").set(self.equity_usd)
         was_capped = self.capped
         self.capped = self.max_equity_usd is not None and equity > self.max_equity_usd
         if self.capped and not was_capped:

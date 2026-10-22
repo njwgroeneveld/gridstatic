@@ -677,3 +677,17 @@ async def test_without_a_cap_the_grid_is_never_capped(grid, connector):
     await grid.run_round()
     assert grid.status()["capped"] is False
     assert grid.status()["max_equity_usd"] is None
+
+
+async def test_realised_equity_is_exported_per_grid_and_dex(config, connector, alerter, clock):
+    from src.strategy import StaticGrid
+    config["coin"] = "xyz:XYZ100"
+    g = StaticGrid("NDX", config, connector=connector, alerter=alerter, clock=clock)
+    connector.get_account_value.return_value = 105.38
+    await g.start()
+    assert _sample("grid_realised_equity_usd", coin="xyz:XYZ100", dex="xyz") == pytest.approx(105.38)
+
+
+async def test_the_default_dex_is_labelled_default(grid, connector):
+    await grid.start()
+    assert _sample("grid_realised_equity_usd", coin="BTC", dex="default") == pytest.approx(550.0)

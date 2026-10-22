@@ -27,6 +27,7 @@ One screen, four rows. Every panel also explains itself under its ⓘ.
 | **Net realised P&L** | closed profit minus fees over the selected time range | Taken from the exchange's own `closedPnl`, so a stop-out counts as the loss it was. It counts from when the pod started; set the range to a day or a week. |
 | **Capital** | per grid: *in use*, *budget* and the share used | Both as position value, leverage included. *Budget* is every cell bought: size per line × leverage × cells. *In use* is the coin held now × the mark price. A grid only holds coin for the cells below the price that filled, so with the price near the top little is in use — that is the design, not idle money. The size per line follows the realised equity of the grid's dex, so the budget grows with profit; coin bought earlier keeps the size of its day, which can make *used* look high right after the size shrank. |
 | **Price and grid** | one panel per grid: the mark price (yellow) between the highest and lowest line (blue, dashed), and the stop-loss (red, dotted) | Inside the bounds the grid trades. Below the lowest line there is nothing left to buy; above the highest nothing left to sell. Below the stop the position is closed, and the grid starts over once the price is back inside. |
+| **Realised equity** | the money each grid sizes from, and the total, over time | Account value of the grid's dex minus the unrealised P&L on it: it rises with closed profit and falls with losses, fees and funding, not with the price of an open position. A transfer between the dexes moves the two grid lines and leaves the total alone. 14 days, as long as Prometheus keeps them; Hyperliquid's portfolio page goes back further. |
 
 ### Alerts — when something needed attention
 
@@ -97,6 +98,7 @@ kubectl -n gridstatic label configmap gridstatic-dashboard grafana_dashboard=1
 | `grid_on_hold` | 1 while new buys are held back — see [When the grid holds](../docs/operations.md#when-the-grid-holds) |
 | `grid_mark_price`, `grid_lower_bound`, `grid_upper_bound`, `grid_stop_loss_price` | the price and the grid around it |
 | `grid_budget_usd`, `grid_position_value_usd` | the position value with every cell bought, and the position value now — both leverage included |
+| `grid_realised_equity_usd{dex}` | account value of the dex minus the unrealised P&L on it — what the order size is computed from; one value per dex, so add dexes up after `max by (dex)` |
 | `grid_last_round_timestamp_seconds` | when the last complete round ended: a bot can be up and still be stuck |
 | `connector_hl_request_duration_seconds{api, request}` | how long Hyperliquid takes per request type (`userFillsByTime`, `frontendOpenOrders`, `order`, …), measured in the connector where it goes over the network |
 | `connector_hl_requests_total{api, request, outcome}` | the same requests by outcome: `ok`, `rejected` (answered but refused), `rate_limited`, `http_4xx`, `http_5xx`, `timeout`, `connection` |
