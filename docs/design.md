@@ -65,7 +65,7 @@ field `c`); gridstatic fills its 16 bytes like this:
 
 | bytes | |
 |---|---|
-| 0–1 | magic `0x6773` — a gridstatic order |
+| 0–1 | magic `0x6773`, a gridstatic order |
 | 2 | version |
 | 3–8 | grid fingerprint: coin, bounds, line count, leverage |
 | 9–10 | cell |
@@ -73,7 +73,7 @@ field `c`); gridstatic fills its 16 bytes like this:
 | 12–15 | nonce, so no two orders share a cloid |
 
 Hyperliquid hands the cloid back with every resting order. After a restart the bot reads the book
-and knows which cell each order is on — without a record, and without comparing prices, which
+and knows which cell each order is on, without a record, and without comparing prices, which
 the exchange rounds and fills at prices of its own ([incident 1](postmortems.md#1-eight-buys-on-one-line-2026-09-09)).
 
 Fills carry only the order id, not the cloid. The bot keeps an in-memory map from order id to
@@ -88,7 +88,7 @@ belong to an earlier grid: the bot does not touch them, and holds until they are
 ### What a cell holds
 
 The rule that carries the design: **a cell's unsold coin is what it bought after its current
-sell was placed** — or, without a resting sell, after its last sell fill. A stop fill ends what
+sell was placed** (or, without a resting sell, after its last sell fill). A stop fill ends what
 every cell held, since the stop sells the whole position.
 
 It works because the bot sizes every sell to cover everything the cell holds at that moment.
@@ -110,10 +110,10 @@ reads "bought since the last sell fill": 0.0010, and a sell of 0.0010 goes out. 
 
 `residual = position − resting sells − unsold coin`. In a healthy grid it is zero within half a
 lot. A position of 0.0030 BTC, with sells of 0.0010 on cells 2 and 5 and 0.0010 unsold on cell 7,
-adds up. A position of 0.0034 leaves 0.0004 that no cell accounts for — bought by hand, say — and
+adds up. A position of 0.0034 leaves 0.0004 that no cell accounts for (bought by hand, say) and
 the grid holds. Any of these makes the grid hold, and no new buy goes out:
 
-| | grid holds — no new buys |
+| | grid holds: no new buys |
 |---|---|
 | residual > 0 | coin no cell accounts for: a manual position, another bot, fills older than the look-back |
 | residual < 0 | resting sells and unsold coin exceed the position |
@@ -140,7 +140,7 @@ report fills, closed cycles, hold changes
 
 The order of the reads carries a rule. A buy that fills during the round has to be seen
 somewhere: still on the book, or in the fills. Reading the book first guarantees that. Reading the
-fills or the position before it can catch the buy gone from the book and not yet in the fills —
+fills or the position before it can catch the buy gone from the book and not yet in the fills:
 an empty cell, and a second buy on it. Position and fills may be read together: when they miss
 each other the position does not add up, and that costs one round on hold, not a double buy.
 
@@ -161,7 +161,7 @@ The margin per line is set every round:
     realised equity = account value of the grid's dex − unrealised P&L of every position on it
     size per line   = realised equity × allocationPct ÷ lines
 
-Realised equity moves with closed profit and loss, fees, funding, deposits and withdrawals — not
+Realised equity moves with closed profit and loss, fees, funding, deposits and withdrawals, not
 with the price of an open position. So profit is reinvested without the bot keeping a record of
 it, and the lines do not shrink while the grid buys its way down, which the plain account value
 would do. Orders already resting keep their size; only new buys use the new one.
@@ -176,7 +176,7 @@ one wrong reading, cannot blow up the buys of every empty cell at once.
 
 Each cell has at most one resting buy and one resting sell. A sell on line `j` always belongs to
 cell `j−1`, so two sells on one line cannot occur. When a later fill grows what a cell holds, the
-bot cancels the smaller sell and places one that covers it all — and only places the new one if
+bot cancels the smaller sell and places one that covers it all, and only places the new one if
 the cancel succeeded, so a cell never ends up with two. Should two still appear, the bot keeps
 the oldest buy (its place in the queue) and the newest sell (the one sized to the whole cell).
 
@@ -188,19 +188,19 @@ Which lines sit below the price is decided from the mark price, not the mid. On 
 the two are the same to the tick. On a thin one they are not: on testnet, `xyz:XYZ100` had one
 ask and four bids, a 9% spread and $21 of daily volume, and its mid sat 3.5% above the mark.
 Worse, a grid's own buys become the best bid, which moves the mid up, which lets the next round
-place a buy one line higher — the grid would chase its own orders toward the ask. The mark price
+place a buy one line higher. The grid would chase its own orders toward the ask. The mark price
 is anchored to the oracle and does not move with the bot.
 
 ### HIP-3 markets
 
 Markets on builder-deployed perp dexes carry the dex in their name (`xyz:XYZ100`). Everything
-the bot reads about such a coin — lot size, mark price, open orders, the position, the balance —
+the bot reads about such a coin (lot size, mark price, open orders, the position, the balance)
 comes from that dex, and the SDK has to be told the dex exists before it can turn the name into
 an asset id. The chart derives the dexes from the configured coins. Each dex has its own
 balance, so the margin check reads the coin's own.
 
 Not yet seen on real data: whether `userFills` returns fills from HIP-3 markets. If it does not,
-the bot cannot tie a filled buy to its cell, the position stops adding up, and the grid holds —
+the bot cannot tie a filled buy to its cell, the position stops adding up, and the grid holds:
 safe, but it does not trade. The first testnet run checks this.
 
 ### No buy on the top line, none near the price
@@ -240,7 +240,7 @@ with such a configuration.
 
 The bot refuses a configuration it must not trade with, and names the problem: two grids on one
 coin, a removed `startBalance`, grids on one dex using more than 100% of it, or a grid that still
-says `shadow: true` — which would otherwise place real orders for someone who believes they are
+says `shadow: true`, which would otherwise place real orders for someone who believes they are
 simulating. Refusing costs nothing; trading on a wrong assumption costs money. An order under the
 exchange's $10 minimum does not block starting: the size depends on the money on the dex, so the
 bot warns instead (see `operations.md`).
@@ -259,7 +259,7 @@ So the chart creates no Secrets. It takes the *name* of a Secret you create your
 (`existingSecret`), and CI fails if the chart ever renders one.
 
 Secret values are read with hidden input, base64-encoded over a pipe and sent to
-`kubectl apply -f -` on stdin — never with `--from-literal=key=value`, which puts the value in
+`kubectl apply -f -` on stdin, never with `--from-literal=key=value`, which puts the value in
 shell history and in the process list. `install.sh` does the same.
 
 ### Prices from the network the orders go to
@@ -297,7 +297,7 @@ probe, so a pod is only "ready" once its application has actually started.
   for passed differently; until then the bot detects the mismatch and holds.
 - **A long outage needs a look.** Coin bought more than `fillLookbackHours` before the bot saw it
   cannot be tied to its cell. The grid holds, and a person decides. On a thin book a partial fill
-  too small to sell can age out the same way — see incident 4.
+  too small to sell can age out the same way; see incident 4.
 - **One grid per coin per account.** Several grids on one coin need several accounts, and several
   installations.
 - **Logs do not survive a restart.** Only the current container's log is available (plus one

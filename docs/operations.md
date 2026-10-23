@@ -24,7 +24,7 @@ is built this way, see the [README](../README.md) and [design decisions](design.
 
 | | why |
 |---|---|
-| A Kubernetes cluster | k3s, minikube, kubeadm — any of them |
+| A Kubernetes cluster | k3s, minikube or kubeadm; any of them works |
 | `kubectl` with access to it | the installation runs from your machine |
 | `helm` 3 | `brew install helm`, `winget install Helm.Helm`, or the [install script](https://helm.sh/docs/intro/install/) |
 | A Hyperliquid testnet account | [app.hyperliquid-testnet.xyz](https://app.hyperliquid-testnet.xyz), with test USDC from its faucet |
@@ -37,7 +37,7 @@ cert-manager or a service mesh.
 
 Use a fresh account or a subaccount, and trade nothing else on it. Every round the bot checks
 that the position adds up to its own orders. A position you opened by hand, or another bot on the
-same coin, makes it hold — correctly, because it can no longer tell what is its own.
+same coin, makes it hold. That is correct, because it can no longer tell what is its own.
 
 ### Which key
 
@@ -48,7 +48,7 @@ same coin, makes it hold — correctly, because it can no longer tell what is it
 
 **API wallets are not supported yet.** An API wallet trades on behalf of another account, and
 the connector would read the API wallet's own, empty account instead of the one it trades for.
-The bot detects this — none of its orders ever show up — and holds, but it cannot trade.
+The bot detects this (none of its orders ever show up) and holds, but it cannot trade.
 
 ---
 
@@ -69,7 +69,7 @@ The script asks for your testnet key (hidden input) and an optional subaccount, 
 5. writes `gridstatic-values.yaml` with a BTC grid on testnet
 6. installs the Helm chart
 7. **verifies the result**: all pods run, the bot started its grid, and its first rounds run
-   without errors — or tells you it is on hold, and why
+   without errors, or tells you it is on hold, and why
 
 You end with a single verdict: done, or what went wrong and where to look.
 
@@ -102,7 +102,7 @@ kubectl create namespace gridstatic
 
 **2. The Hyperliquid secret**
 
-This chart contains no keys and creates no Secrets — you create them and pass only their names
+This chart contains no keys and creates no Secrets: you create them and pass only their names
 (see [Security](#security) for why).
 
 ```bash
@@ -125,7 +125,7 @@ This looks more roundabout than `kubectl create secret --from-literal=...`, on p
 `--from-literal` the key lands in your shell history and in the process list. Here it is read
 with hidden input, handed to `base64` over a pipe, and sent to `kubectl` over stdin.
 
-**3. Values** — create `gridstatic-values.yaml`:
+**3. Values**: create `gridstatic-values.yaml`:
 
 ```yaml
 hyperliquid:
@@ -199,10 +199,10 @@ while it buys its way down. Orders already resting keep their size.
 **Every perp dex has its own balance.** BTC trades on the default dex (which shares with spot
 USDC), `xyz:XYZ100` on the `xyz` dex. Each grid grows with the profit on its own dex. To shift
 capital between grids on different dexes, transfer USDC between the dexes yourself; the next
-round sizes from it. **Every USDC on a dex counts as grid capital** — on the default dex
-spot USDC too — so do not keep money for something else on the same wallet. Grids on the
+round sizes from it. **Every USDC on a dex counts as grid capital**: on the default dex
+spot USDC too, so do not keep money for something else on the same wallet. Grids on the
 same dex share it: their `allocationPct` may add up to at most
-100 — keep it near 90 to leave room for fees and funding.
+100; keep it near 90 to leave room for fees and funding.
 
 **A ceiling, if you want one.** `maxEquityUsd` caps the equity a grid sizes from: with $612 on
 the dex, a cap of 500, 90% and 10 lines, the size is $45 a line instead of $55. Money above it
@@ -212,10 +212,10 @@ also limits what a stray deposit or a wrong reading can do to the empty cells af
 
 **Adding a grid** never needs a sale: the other grids keep their fingerprint, orders, positions
 and stops; the upgrade only restarts grid-static for a few seconds. On a shared dex, lower the
-other grids' `allocationPct` first if the total would pass 100 — that only makes their next buys
+other grids' `allocationPct` first if the total would pass 100. That only makes their next buys
 smaller.
 
-**The bot refuses to start** — with a message that names the problem — when:
+**The bot refuses to start**, with a message that names the problem, when:
 
 | | why |
 |---|---|
@@ -227,7 +227,7 @@ smaller.
 An order under $10 no longer stops the bot: the size depends on the money on the dex, so it warns at startup and leaves those cells empty until the dex holds more.
 
 `grid.coins` has no default: the chart refuses to install without an active grid. That is on
-purpose — Helm merges maps, so a default grid would quietly run next to the ones in your file.
+purpose. Helm merges maps, so a default grid would quietly run next to the ones in your file.
 
 ### Other settings
 
@@ -252,7 +252,7 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 
 > **Changing `coin`, `numLines`, `lower`, `upper` or `leverage` makes a new grid.** Every order
 > carries a fingerprint of exactly those five settings. After the change, the old grid's orders
-> carry a different fingerprint: the bot leaves them alone, but it also holds — its position no
+> carry a different fingerprint: the bot leaves them alone, but it also holds, because its position no
 > longer adds up. Cancel the old orders and close or keep the old position deliberately before
 > you change them. Changing `allocationPct` is safe; it applies to new orders.
 
@@ -260,7 +260,7 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 
 ## Stocks and indices: HIP-3 markets
 
-Hyperliquid also lists markets deployed by third parties on perp dexes of their own (HIP-3) —
+Hyperliquid also lists markets deployed by third parties on perp dexes of their own (HIP-3):
 the Nasdaq-100, single stocks, commodities. Their names carry the dex: `xyz:XYZ100` is the
 Nasdaq-100 on the `xyz` dex. Use that full name, quoted:
 
@@ -281,14 +281,14 @@ The chart passes the dex on to the connector; nothing else to configure. Three t
 from a regular market:
 
 - **Each HIP-3 dex keeps its own balance.** USDC on your regular perps account does not margin
-  an `xyz` position. Move USDC to that dex first — a `sendAsset` transfer to it, or enable dex
+  an `xyz` position. Move USDC to that dex first: a `sendAsset` transfer to it, or enable dex
   abstraction so the account shares collateral across dexes. The startup margin check reads the
   balance of the coin's own dex and warns if it is short.
 - **Check the market on the network you use.** A market can be busy on mainnet and nearly empty
   on testnet. On testnet a grid there mostly tests the plumbing: with no one trading, its orders
   rarely fill.
-- **Look at the market's own rules** in its listing — maximum leverage, isolated-only, trading
-  hours — before you pick a leverage.
+- **Look at the market's own rules** in its listing (maximum leverage, isolated-only, trading
+  hours) before you pick a leverage.
 
 `tools/gridcheck.py` handles HIP-3 coins the same way.
 
@@ -331,7 +331,7 @@ and a `hold_cleared` alert when it resumes. `/status` shows it too.
 | the position has coin no cell accounts for | a manual position, another bot on the coin, or fills older than `fillLookbackHours`. Close the extra position, or sell it yourself. |
 | orders from an earlier grid on this coin | you changed the grid's bounds, lines or leverage. Cancel the old orders, or restore the old settings. |
 | resting sells and unsold coin exceed the position | someone sold coin the bot had a sell for, or closed the position by hand. Cancel the excess sell; unsold coin without a sell clears once its buy is older than `fillLookbackHours`. |
-| none of the orders placed last round is on the book or filled | the bot reads another account than it trades on. Check `wallet_address` — see [Which key](#which-key). |
+| none of the orders placed last round is on the book or filled | the bot reads another account than it trades on. Check `wallet_address`; see [Which key](#which-key). |
 | short position | a grid only ever holds long. Close the short. |
 
 The rule behind it: a buy too few costs one missed cycle; a buy too many is how a grid once
@@ -344,7 +344,7 @@ bought the same line eight times. See [`docs/design.md`](design.md).
 Manual on purpose. Run on testnet until the grid has done what you expect for long enough to
 trust it, then:
 
-1. Create a Secret with your **mainnet** key, the same way as the testnet one — a separate
+1. Create a Secret with your **mainnet** key, the same way as the testnet one: a separate
    account or subaccount with a balance you are willing to lose.
 2. In `gridstatic-values.yaml`, set `hyperliquid.testnet: false` and point
    `hyperliquid.existingSecret` at the new Secret.
@@ -363,14 +363,14 @@ The testnet orders stay on testnet; nothing carries over.
 
 ## Checking a running grid
 
-**What the bot sees** — every cell, the position, and whether it holds:
+**What the bot sees**: every cell, the position, and whether it holds:
 
 ```bash
 kubectl -n gridstatic port-forward svc/gridstatic-grid-static 8080:8080
 curl -s localhost:8080/status
 ```
 
-**An independent check** — `tools/gridcheck.py` reads your grid settings from the cluster and
+**An independent check**: `tools/gridcheck.py` reads your grid settings from the cluster and
 your account straight from Hyperliquid's public API: no key, no connector, nothing changed.
 
 ```bash
@@ -402,12 +402,12 @@ runbooks, and a Grafana dashboard, to apply with `kubectl`.
 ## Telegram alerts (optional)
 
 Create a bot with [@BotFather](https://t.me/BotFather). **Use a token that no other application
-listens on** — Telegram allows only one listener per token, and two would take updates away
+listens on**: Telegram allows only one listener per token, and two would take updates away
 from each other.
 
 **The easy way:** run `bash install.sh` again and answer yes to the Telegram question. It checks
 the token, looks up your chat id once you have sent the bot a message, sends a test message,
-creates the Secret and turns the alerter on — without the token ever showing on screen.
+creates the Secret and turns the alerter on, without the token ever showing on screen.
 
 **By hand:**
 
@@ -434,7 +434,7 @@ telegram:
 ```
 
 You get alerts when a buy fills, a cycle closes (with its profit after fees), the grid goes on or
-off hold, the price nears or leaves the range, and when something fails — plus a `/status`
+off hold, the price nears or leaves the range, and when something fails, plus a `/status`
 command with a cell-by-cell view of every grid. With Telegram disabled, alerts fail silently and
 the bot keeps running.
 
@@ -468,7 +468,7 @@ kubectl delete namespace gridstatic
 
 Uninstalling stops the bot, not the orders it placed: cancel them and close the position on
 Hyperliquid yourself. Installing again with the same grid settings picks the grid up where it
-was — the orders still carry its fingerprint.
+was, because the orders still carry its fingerprint.
 
 ---
 
