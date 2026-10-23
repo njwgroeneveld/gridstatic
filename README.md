@@ -24,9 +24,9 @@ grid you configured. A restart, a crash or a network outage is just another roun
 | | |
 |---|---|
 | **One source of truth** | An earlier version kept a database next to the exchange. Its three production incidents came from the two drifting apart, or from the database itself. Removing the database made the exchange the only state. |
-| **Fail-safe by default** | Every 30 seconds the bot runs a round: it reads the exchange (open orders, position, price, fills), works out what to cancel and place, and does it. If any read fails, that round places and cancels nothing: an exchange the bot cannot read is never treated as an empty one. Coin the bot cannot account for puts the grid *on hold*: no new buys, while sells still go out. A config that is not safe to trade with makes the bot refuse to start. |
+| **Fail-safe by default** | Every 30 seconds the bot runs a round: it reads the exchange (open orders, position, price, fills), works out what to cancel and place, and does it. If any read fails, that round places and cancels nothing: a failed read of the open orders must never look like "no orders", or the bot would place them all again. If the position holds more BTC (or whichever asset the grid trades) than the bot's own orders explain, for example after a manual trade, the grid goes *on hold*: it places no new buys, but still places sells, so what it holds can be sold. A config that is not safe to trade with makes the bot refuse to start. |
 | **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/postmortems.md`](docs/postmortems.md), and has a regression test. |
-| **Tested where it breaks** | Every decision is made in one function without network calls, so each situation can be tested without an exchange. Each safety rule was removed once on purpose, to check that a test then fails. Assumptions were checked against the real thing, not a mock: the SDK's actual signatures, the testnet API's actual answers, a rendered Helm chart. |
+| **Tested where it breaks** | Every decision is made in one function without network calls, so each situation can be tested without an exchange. Each safety rule was removed once on purpose, to check that a test then fails. Assumptions were checked against the real thing, not a mock: the SDK's actual signatures, the testnet API's actual answers, and the Kubernetes files the Helm chart actually generates. |
 | **Operable** | Helm chart, multi-arch images, CI gates, a one-command installer, Telegram alerts, Prometheus metrics. |
 
 ---
@@ -53,7 +53,7 @@ profit is reinvested without the bot keeping a record of it.
 ```mermaid
 flowchart LR
     R[read orders, position,<br/>price, fills] --> T[tie fills to cells<br/>via the order id]
-    T --> D["reconcile()<br/>pure, no I/O"]
+    T --> D["decide what to change<br/>(no network calls)"]
     D --> A[cancel, then sell,<br/>then buy]
     A --> N[alerts, metrics,<br/>/status]
     R -. any read fails .-> X[do nothing<br/>this round]
@@ -114,7 +114,7 @@ API wallet and whether the account is a subaccount, and signs accordingly
 | Prices arrived as strings | `Decimal` → JSON through the database service; mocks returned floats | No database; verify at the real boundary |
 | A shared free database dropped requests | One free cloud Postgres, shared by several projects, stood between the bot and its state | No database |
 | Two grids on hold for days, unseen | No metric was ever collected; and a stop fill did not end what the cells held | Alerts outside the bot; a stop resets every cell |
-| Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Measured per request: round time halved, in two parallel phases, and never the fills before the book |
+| Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Each grid now reads only its own dex and only recent fills, in two parallel batches: a round takes half the time |
 
 The full write-ups are in [`docs/postmortems.md`](docs/postmortems.md).
 
@@ -155,19 +155,10 @@ monitoring/                 optional: Grafana dashboard, alert rules, scrape tar
 docs/                       design.md (why), operations.md (how)
 ```
 
-```bash
-for s in grid-static connector telegram-alerter; do
-  PYTHONPATH="$PWD/services/$s" python -m pytest "services/$s/tests/" -q
-done
-```
-
 ---
 
-## Status and next steps
+## Status
 
 Running on Hyperliquid testnet since October 2026. Proven on real data: placing and recognising
 orders, tying a fill to its cell, the stop order on the exchange, fills on a HIP-3 market,
-reinvesting realised profit, and trading through an API wallet for a subaccount. Not yet: a stop
-that actually fires.
-
-Next: making a chart upgrade always roll every pod.
+reinvesting realised profit, and trading through an API wallet for a subaccount.
