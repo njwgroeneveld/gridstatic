@@ -1,10 +1,12 @@
 # gridstatic
 
 A grid trading bot for [Hyperliquid](https://hyperliquid.xyz), run on Kubernetes, that keeps no
-database. Everything it needs is already on the exchange: the open orders, the position, the fills,
-and a label the bot attaches to every order saying which grid and which cell it belongs to. Every
-round it reads all of that and repairs the difference with the grid you configured. A restart, a
-crash or a network outage is just another round.
+database. Its state lives in the exchange's own order metadata: every order the bot places carries
+a client order id (cloid), a 128-bit field that Hyperliquid stores with the order and returns with
+it ([Hyperliquid API docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint)).
+The bot writes into it which grid and which cell the order belongs to. Every round it reads the
+open orders with that metadata, the position and the fills, and repairs the difference with the
+grid you configured. A restart, a crash or a network outage is just another round.
 
 [![grid-static](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-grid-static.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-grid-static.yml)
 [![connector](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-connector.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-connector.yml)
