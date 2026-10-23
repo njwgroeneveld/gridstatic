@@ -1,9 +1,10 @@
 # gridstatic
 
 A grid trading bot for [Hyperliquid](https://hyperliquid.xyz), run on Kubernetes, that keeps no
-database. Every round it reads the exchange — open orders, position, fills — and repairs the
-difference with the grid you configured. A restart, a crash or a network outage is just another
-round.
+database. Everything it needs is already on the exchange: the open orders, the position, the fills,
+and a label the bot attaches to every order saying which grid and which cell it belongs to. Every
+round it reads all of that and repairs the difference with the grid you configured. A restart, a
+crash or a network outage is just another round.
 
 [![grid-static](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-grid-static.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-grid-static.yml)
 [![connector](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-connector.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/deploy-connector.yml)
@@ -11,7 +12,7 @@ round.
 [![chart](https://github.com/njwgroeneveld/gridstatic/actions/workflows/publish-chart.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/publish-chart.yml)
 
 > A personal project, built to learn reliability engineering on a system that moves money. It runs
-> on Hyperliquid's testnet by default — currently a BTC grid and a Nasdaq-100 grid. Not financial
+> on Hyperliquid's testnet by default, currently with a BTC grid and a Nasdaq-100 grid. Not financial
 > advice, and no claim that a grid makes money.
 
 ---
@@ -20,8 +21,8 @@ round.
 
 | | |
 |---|---|
-| **One source of truth** | Version 0.3 kept a database next to the exchange. Its three production incidents came from the two drifting apart, or from the database itself. 0.4 removed the database: the exchange is the only state. |
-| **Fail-safe by default** | An unreadable exchange is never an empty one: the round does nothing. Coin the bot cannot account for puts the grid *on hold* — no new buys, sells still go out. An unsafe config refuses to start. |
+| **One source of truth** | An earlier version kept a database next to the exchange. Its three production incidents came from the two drifting apart, or from the database itself. Removing the database made the exchange the only state. |
+| **Fail-safe by default** | An unreadable exchange is never an empty one: the round does nothing. Coin the bot cannot account for puts the grid *on hold*: no new buys, while sells still go out. An unsafe config refuses to start. |
 | **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/postmortems.md`](docs/postmortems.md), and has a regression test. |
 | **Tested where it breaks** | All decisions live in one pure function. Its safety rules were each removed once to confirm a test fails without them. Assumptions were checked at the real boundary: the SDK's signatures, the testnet API, a rendered chart. |
 | **Operable** | Helm chart, multi-arch images, CI gates, a one-command installer, Telegram alerts, Prometheus metrics. |
@@ -33,23 +34,18 @@ round.
 The price range is cut into lines. Each pair of neighbouring lines is a **cell**: buy on the lower
 line, sell on the upper. A filled buy gets a sell; a filled sell gets its buy back.
 
-```text
-         line     cell (buy → sell)   resting on the exchange
-88,000 ── p4 ──
-                  cell 3  p3 → p4     nothing: a buy above the price would fill at once
-86,000 ── p3 ──
-                  cell 2  p2 → p3     sell at 86,000 (holds coin)
-84,000 ── p2 ──
-   price 83,500 ◄
-                  cell 1  p1 → p2     sell at 84,000 (holds coin)
-82,000 ── p1 ──
-                  cell 0  p0 → p1     buy at 80,000
-80,000 ── p0 ──
-```
+An example: a BTC grid from 80,000 to 88,000 with five lines, while the price is 83,500.
 
-Five lines make four cells. Buys rest only below the price; the top line has no cell above it.
+| Cell | Buys at | Sells at | Resting on the exchange now |
+|---|---|---|---|
+| 3 | 86,000 | 88,000 | nothing: a buy above the price would fill at once |
+| 2 | 84,000 | 86,000 | a sell at 86,000, for the coin it bought |
+| 1 | 82,000 | 84,000 | a sell at 84,000, for the coin it bought |
+| 0 | 80,000 | 82,000 | a buy at 80,000 |
 
-Each buy is sized from the grid's share of the realised equity on its dex, every round — so
+Five lines make four cells. Buys rest only below the price, and the top line has no cell above it.
+
+Each buy is sized from the grid's share of the realised equity on its dex, every round, so
 profit is reinvested without the bot keeping a record of it.
 
 ```mermaid
@@ -64,7 +60,8 @@ flowchart LR
 Four ideas carry the design:
 
 - **The order id is the memory.** Every order's client order id encodes its grid and its cell, so
-  after a restart the bot reads the book and knows where it stands — no record, no price matching.
+  after a restart the bot reads the book and knows where it stands, with no record and no price
+  matching.
 - **One rule for unsold coin.** A cell's unsold coin is what it bought after its current sell went
   out. That covers partial fills, restarts and a crash halfway through replacing an order.
 - **The position has to add up.** Before any new buy, every coin of the position must be explained
@@ -76,7 +73,7 @@ Four ideas carry the design:
 
 How each of these works, with examples: [docs/design.md](docs/design.md#the-exchange-is-the-only-source-of-truth).
 
-It also trades HIP-3 markets — stocks and indices on third-party perp dexes, such as the
+It also trades HIP-3 markets: stocks and indices on third-party perp dexes, such as the
 Nasdaq-100 (`xyz:XYZ100`). It decides from the mark price, not the mid: the testnet order books
 are thin, so the mid moves with the bot's own orders.
 
@@ -109,7 +106,7 @@ ClusterIP. Nothing is exposed outside the cluster.
 | Prices arrived as strings | `Decimal` → JSON through the database service; mocks returned floats | No database; verify at the real boundary |
 | A shared free database dropped requests | One free cloud Postgres, shared by several projects, stood between the bot and its state | No database |
 | Two grids on hold for days, unseen | No metric was ever collected; and a stop fill did not end what the cells held | Alerts outside the bot; a stop resets every cell |
-| Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Measured per request: round time halved, in two parallel phases — never the fills before the book |
+| Rounds took seconds | Every grid read every dex, and the whole fill history, one request after another | Measured per request: round time halved, in two parallel phases, and never the fills before the book |
 
 The full write-ups are in [`docs/postmortems.md`](docs/postmortems.md).
 
@@ -135,12 +132,12 @@ move to mainnet are in [`docs/operations.md`](docs/operations.md).
 | | |
 |---|---|
 | Services | Python 3.11, FastAPI, httpx, `hyperliquid-python-sdk` |
-| Tests | pytest — 251 tests, the decision logic covered case by case |
+| Tests | pytest, 283 tests, with the decision logic covered case by case |
 | Platform | Kubernetes, Helm, GitHub Actions, multi-arch images on ghcr.io |
 | Operations | Prometheus metrics with an optional dashboard and alerts ([`monitoring/`](monitoring/README.md)), Telegram alerts, a read-only consistency check (`tools/gridcheck.py`) |
 
 ```
-services/grid-static/       strategy — src/reconcile.py decides, src/strategy.py acts
+services/grid-static/       strategy: src/reconcile.py decides, src/strategy.py acts
 services/connector/         the only service that talks to Hyperliquid
 services/telegram-alerter/  alerts and the /status command
 chart/                      Helm chart
