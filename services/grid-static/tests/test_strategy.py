@@ -691,3 +691,12 @@ async def test_realised_equity_is_exported_per_grid_and_dex(config, connector, a
 async def test_the_default_dex_is_labelled_default(grid, connector):
     await grid.start()
     assert _sample("grid_realised_equity_usd", coin="BTC", dex="default") == pytest.approx(550.0)
+
+
+async def test_a_skipped_round_names_the_kind_of_error(grid, connector, caplog):
+    # A timeout carries no message; "exchange unreadable: " alone hid what went wrong.
+    import httpx
+    await grid.start()
+    connector.get_fills.side_effect = httpx.ReadTimeout("")
+    assert await grid.run_round() is None
+    assert "exchange unreadable: ReadTimeout" in caplog.text

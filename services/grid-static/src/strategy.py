@@ -26,6 +26,13 @@ _REPEAT_MS = 60 * 60 * 1000         # a standing hold or notice is repeated hour
 _DAY_MS = 24 * 60 * 60 * 1000
 _UNREADABLE_ALERT_AFTER = 3          # failed rounds in a row before an alert
 
+def describe(e: Exception) -> str:
+    """The kind of error and its message. A timeout has no message of its own,
+    and "exchange unreadable: " with nothing after it hides what went wrong."""
+    msg = str(e)
+    return f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+
+
 def dex_of(coin: str) -> str:
     """The perp dex a coin trades on: "xyz" for "xyz:XYZ100", "" by default."""
     return coin.split(":", 1)[0] if ":" in coin else ""
@@ -221,13 +228,13 @@ class StaticGrid:
         except Exception as e:
             # An exchange that cannot be read is never an empty exchange: act on
             # nothing until it answers again.
-            log.error(f"[{self.coin_key}] round skipped, exchange unreadable: {e}")
+            log.error(f"[{self.coin_key}] round skipped, exchange unreadable: {describe(e)}")
             metrics.grid_errors_total.labels(type="read").inc()
             self._failed_reads += 1
             if self._failed_reads >= _UNREADABLE_ALERT_AFTER:
                 await self._notice(f"{self.coin_key}: exchange unreadable for "
                                    f"{self._failed_reads} rounds in a row -- the grid does "
-                                   f"nothing until it answers again. Last error: {e}",
+                                   f"nothing until it answers again. Last error: {describe(e)}",
                                    key="unreadable")
             return None
         self._failed_reads = 0
@@ -500,7 +507,7 @@ class StaticGrid:
             try:
                 await self.run_round()
             except Exception as e:
-                log.exception(f"[{self.coin_key}] round failed: {e}")
+                log.exception(f"[{self.coin_key}] round failed: {describe(e)}")
                 metrics.grid_errors_total.labels(type="round").inc()
             await asyncio.sleep(self.interval)
 
