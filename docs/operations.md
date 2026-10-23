@@ -45,10 +45,14 @@ same coin, makes it hold. That is correct, because it can no longer tell what is
 |---|---|---|
 | the account itself | that account's key | empty |
 | a subaccount | the **main** account's key | the subaccount's address |
+| an API wallet for the account | the **API wallet's** key | the account's address |
+| an API wallet for a subaccount | the **API wallet's** key | the subaccount's address |
 
-**API wallets are not supported yet.** An API wallet trades on behalf of another account, and
-the connector would read the API wallet's own, empty account instead of the one it trades for.
-The bot detects this (none of its orders ever show up) and holds, but it cannot trade.
+**Prefer an API wallet.** Create one under *API* on Hyperliquid, approved by your main account. It
+can trade, but it cannot withdraw or move funds, so a leaked key cannot drain the account. At
+startup the connector asks the exchange (`userRole`) whether the key is an API wallet and whether
+`wallet_address` is a subaccount, and signs accordingly. An API wallet expires on the date you set
+when you created it; after that the exchange refuses its orders and the grid holds with an alert.
 
 ---
 

@@ -394,3 +394,58 @@ def test_a_position_carries_its_unrealised_pnl():
     client._info.user_state.return_value = {"assetPositions": [
         {"position": {"coin": "BTC", "szi": "0.002", "entryPx": "83000", "unrealizedPnl": "-1.25"}}]}
     assert client.get_open_positions(dex="")["BTC"]["unrealized_pnl"] == -1.25
+
+
+def _built(key_address: str, wallet_address: str | None, roles: dict[str, str] | None = None):
+    """How the SDK's Exchange was constructed, for a key, a wallet address and the roles
+    the exchange reports through userRole."""
+    roles = roles or {}
+    with patch("src.exchange_client.Account") as mock_acct,          patch("src.exchange_client.Info") as info,          patch("src.exchange_client.Exchange") as exchange:
+        mock_acct.from_key.return_value = MagicMock(address=key_address)
+        info.return_value.post.side_effect = (
+            lambda path, body: {"role": roles.get(body["user"], "user")})
+        client = ExchangeClient(private_key="0x" + "a" * 64, wallet_address=wallet_address,
+                                testnet=True)
+    return client, exchange.call_args.kwargs
+
+
+def test_the_main_key_for_a_subaccount_trades_as_before():
+    # Niels' setup: the main key, wallet_address the subaccount.
+    client, kw = _built("0xMAIN", "0xSUB", {"0xSUB": "subAccount"})
+    assert kw["vault_address"] == "0xSUB"
+    assert kw.get("account_address") is None
+    assert client.uses_api_wallet is False
+
+
+def test_an_api_wallet_for_a_subaccount_keeps_the_vault_address():
+    client, kw = _built("0xAGENT", "0xSUB", {"0xAGENT": "agent", "0xSUB": "subAccount"})
+    assert kw["vault_address"] == "0xSUB"
+    assert kw.get("account_address") is None
+    assert client.uses_api_wallet is True
+
+
+def test_an_api_wallet_for_the_main_account_uses_account_address():
+    # As a vault address the exchange would read the main account as a subaccount.
+    client, kw = _built("0xAGENT", "0xMAIN", {"0xAGENT": "agent"})
+    assert kw["account_address"] == "0xMAIN"
+    assert kw.get("vault_address") is None
+    assert client.uses_api_wallet is True
+
+
+def test_the_account_s_own_key_asks_nothing_and_trades_as_before():
+    client, kw = _built("0xMAIN", None)
+    assert client.uses_api_wallet is False
+    assert kw.get("account_address") is None
+
+
+def test_addresses_are_compared_without_case():
+    client, _ = _built("0xAbC", "0xabc", {"0xAbC": "agent"})
+    assert client.uses_api_wallet is False
+
+
+def test_an_unreadable_role_refuses_to_build():
+    with patch("src.exchange_client.Account") as mock_acct,          patch("src.exchange_client.Info") as info,          patch("src.exchange_client.Exchange"):
+        mock_acct.from_key.return_value = MagicMock(address="0xAGENT")
+        info.return_value.post.side_effect = ConnectionError("down")
+        with pytest.raises(ConnectionError):
+            ExchangeClient(private_key="0x" + "a" * 64, wallet_address="0xSUB", testnet=True)

@@ -292,9 +292,8 @@ probe, so a pod is only "ready" once its application has actually started.
 - **History is short.** Realised profit is reported for the last 24 hours from the exchange's
   fills; there is no total since the start, and the exchange keeps only the last 10,000 fills.
   The Prometheus counters add up while the pod runs.
-- **API wallets are not supported yet.** The connector passes `wallet_address` as the vault
-  (subaccount) to trade for, and reads that address. An API wallet needs the account it trades
-  for passed differently; until then the bot detects the mismatch and holds.
+- **An API wallet expires.** It is the safer key (it cannot withdraw), but it stops working on the
+  date set when it was created, and the grid then holds until a new one is in the Secret.
 - **A long outage needs a look.** Coin bought more than `fillLookbackHours` before the bot saw it
   cannot be tied to its cell. The grid holds, and a person decides. On a thin book a partial fill
   too small to sell can age out the same way; see incident 4.

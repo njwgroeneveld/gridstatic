@@ -46,11 +46,33 @@ class ExchangeClient:
         # them to turn a name like "xyz:XYZ100" into an asset id.
         self._dexes = [""] + [d for d in (perp_dexs or []) if d]
         self._info = Info(base_url, skip_ws=True, perp_dexs=self._dexes)
-        self._exchange = Exchange(self._account, base_url, vault_address=wallet_address,
-                                  perp_dexs=self._dexes)
+        # Who signs, and for whom. An API (agent) wallet may trade but not withdraw.
+        # The addresses alone cannot tell an agent from a main key trading for a
+        # subaccount -- in both the key's address differs -- so ask the exchange.
+        #   key is an agent, wallet is a subaccount or vault -> vault_address (as with the main key)
+        #   key is an agent, wallet is the main account       -> account_address
+        #   otherwise                                         -> vault_address, as always
+        self.uses_api_wallet = (self._account.address.lower() != self._wallet_address.lower()
+                                and self._role(self._account.address) == "agent")
+        for_main_account = (self.uses_api_wallet
+                            and self._role(self._wallet_address) not in ("subAccount", "vault"))
+        if for_main_account:
+            self._exchange = Exchange(self._account, base_url,
+                                      account_address=self._wallet_address,
+                                      perp_dexs=self._dexes)
+        else:
+            self._exchange = Exchange(self._account, base_url, vault_address=wallet_address,
+                                      perp_dexs=self._dexes)
+        log.info(f"signing with {'an API wallet' if self.uses_api_wallet else 'the account key'}"
+                 f"{' for the main account' if for_main_account else ''}")
         metrics.instrument(self._info)
         metrics.instrument(self._exchange)
         self._sz_cache: dict[str, int] = {}
+
+    def _role(self, address: str) -> str:
+        """"user", "agent", "subAccount", "vault" or "missing", as the exchange has it.
+        Raises when it cannot be read: guessing who signs for whom is not safe."""
+        return str(self._info.post("/info", {"type": "userRole", "user": address})["role"])
 
     def get_sz_decimals(self, coin: str) -> int:
         """Raises KeyError for a coin the dex does not list: guessing a lot size
