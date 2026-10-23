@@ -24,9 +24,9 @@ grid you configured. A restart, a crash or a network outage is just another roun
 | | |
 |---|---|
 | **One source of truth** | An earlier version kept a database next to the exchange. Its three production incidents came from the two drifting apart, or from the database itself. Removing the database made the exchange the only state. |
-| **Fail-safe by default** | An unreadable exchange is never an empty one: the round does nothing. Coin the bot cannot account for puts the grid *on hold*: no new buys, while sells still go out. An unsafe config refuses to start. |
+| **Fail-safe by default** | Every 30 seconds the bot runs a round: it reads the exchange (open orders, position, price, fills), works out what to cancel and place, and does it. If any read fails, that round places and cancels nothing: an exchange the bot cannot read is never treated as an empty one. Coin the bot cannot account for puts the grid *on hold*: no new buys, while sells still go out. A config that is not safe to trade with makes the bot refuse to start. |
 | **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/postmortems.md`](docs/postmortems.md), and has a regression test. |
-| **Tested where it breaks** | All decisions live in one pure function. Its safety rules were each removed once to confirm a test fails without them. Assumptions were checked at the real boundary: the SDK's signatures, the testnet API, a rendered chart. |
+| **Tested where it breaks** | Every decision is made in one function without network calls, so each situation can be tested without an exchange. Each safety rule was removed once on purpose, to check that a test then fails. Assumptions were checked against the real thing, not a mock: the SDK's actual signatures, the testnet API's actual answers, a rendered Helm chart. |
 | **Operable** | Helm chart, multi-arch images, CI gates, a one-command installer, Telegram alerts, Prometheus metrics. |
 
 ---
