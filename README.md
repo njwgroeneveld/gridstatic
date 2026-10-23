@@ -87,7 +87,7 @@ are thin, so the mid moves with the bot's own orders.
 flowchart LR
     subgraph k8s[Kubernetes namespace]
         GS[grid-static<br/><i>strategy, /status</i>]
-        CON[connector<br/><i>only service</i><br/><i>with the key</i>]
+        CON[connector<br/><i>only service</i><br/><i>that signs orders</i>]
         TG[telegram-alerter<br/><i>optional</i>]
     end
     GS --> CON --> HL[Hyperliquid API]
@@ -97,6 +97,12 @@ flowchart LR
 
 Three small FastAPI services, each with its own image (amd64 + arm64) and test suite, talking over
 ClusterIP. Nothing is exposed outside the cluster.
+
+Only the connector holds a key, and it is the key of a Hyperliquid **API wallet**: a key the
+account approves to trade on its behalf, which cannot withdraw or move funds. A leaked key could
+place orders, but never drain the account. The connector asks the exchange whether its key is an
+API wallet and whether the account is a subaccount, and signs accordingly
+([which key to use](docs/operations.md#which-key)).
 
 ---
 
@@ -160,8 +166,8 @@ done
 ## Status and next steps
 
 Running on Hyperliquid testnet since October 2026. Proven on real data: placing and recognising
-orders, tying a fill to its cell, the stop order on the exchange, a HIP-3 market. Not yet: a stop
-that actually fires, and fills on a HIP-3 market.
+orders, tying a fill to its cell, the stop order on the exchange, fills on a HIP-3 market,
+reinvesting realised profit, and trading through an API wallet for a subaccount. Not yet: a stop
+that actually fires.
 
-Next: support for API wallets (an agent key that can trade but not withdraw), and making a chart
-upgrade always roll every pod.
+Next: making a chart upgrade always roll every pod.
