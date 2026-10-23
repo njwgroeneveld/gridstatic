@@ -17,8 +17,9 @@ lapses as soon as a buy fills. The second compared the *line* price with the *fi
 those never matched live (5-significant-digit rounding, slippage, averaged partial fills). So
 every filled line looked free again within a minute and was bought again.
 
-**Why shadow never showed it.** Shadow filled at the exact line price, so the price comparison
-matched there. The guard worked only in the mode where it did not matter.
+**Why testing never showed it.** The bot had been tested in a simulation that ran without any
+exchange: it followed the mainnet price and counted an order as filled when the price crossed its
+line, at exactly the line price. So the price comparison matched there. The guard worked only in the mode where it did not matter.
 
 A second, related flaw: the exchange client turned any API error into an empty list. Recovery read
 an empty order book as "everything filled", and the fill loop advanced its watermark before the
@@ -54,7 +55,7 @@ and distrust mocks that already return the corrected type.
 
 **Now.** There is no database to cross. Grid recognition is a fingerprint in the cloid, computed
 from the settings after converting every number to `float`. The lesson was applied while building
-0.4: the real status output was piped through the real alerter formatter (which found a bug no
+the version without a database: the real status output was piped through the real alerter formatter (which found a bug no
 test had), the real SDK signatures were checked against the calls, and `gridcheck` was run
 against the real testnet API.
 
@@ -69,7 +70,7 @@ requests*. The bot hung on its database calls, and a fresh install crashed at st
 was hit could not be established afterwards: the provider's usage history goes back one month.
 
 **Now.** There is no database. The bot reads its state from the exchange, which it needs anyway;
-the database's egress went to zero once 0.4 was deployed on October 2. The startup wait for the
+the database's egress went to zero once the version without it was deployed on October 2. The startup wait for the
 connector and the readiness probes stay.
 
 ### 4. Two grids on hold for days, and nobody saw it (2026-10-17)

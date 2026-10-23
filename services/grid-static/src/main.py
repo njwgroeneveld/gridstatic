@@ -55,11 +55,6 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
             skipped.append(f"{key}: strategy_type={strategy_type} is not supported "
                            f"by grid-static; grid not started")
             continue
-        if c.get("shadow"):
-            # Shadow mode is gone. Starting anyway would place real orders for
-            # someone who believes they are simulating.
-            errors.append(f"{key}: shadow mode was removed. Test on testnet instead "
-                          f"(hyperliquid.testnet: true) and remove `shadow` from the grid.")
         for removed in _REMOVED:
             if removed in c:
                 errors.append(f"{key}: {removed} was removed: the grid sizes its orders from "

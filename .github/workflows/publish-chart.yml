@@ -55,16 +55,6 @@ jobs:
           helm template t ./chart $KEY \
             | grep -A1 "name: HYPERLIQUID_TESTNET" | grep -q 'value: "true"'
 
-      - name: Refuse a grid that still says shadow true
-        run: |
-          # Shadow mode is gone. Rendering it would place real orders for a grid
-          # someone believes is simulated.
-          if out=$(helm template t ./chart $KEY --set grid.coins.BTC-20.shadow=true 2>&1); then
-            echo "ERROR: the chart renders a grid with shadow: true"
-            exit 1
-          fi
-          echo "$out" | grep -q "shadow mode was removed"
-
       - name: No database left
         run: |
           if helm template t ./chart $KEY | grep -qiE -- "-dal\b|DATABASE_URL|dal_url"; then

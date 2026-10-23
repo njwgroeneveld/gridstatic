@@ -16,7 +16,6 @@ is built this way, see the [README](../README.md) and [design decisions](design.
 - [Telegram alerts (optional)](#telegram-alerts-optional)
 - [Security](#security)
 - [Uninstalling](#uninstalling)
-- [Upgrading from 0.3](#upgrading-from-03)
 
 ---
 
@@ -226,7 +225,6 @@ smaller.
 | | why |
 |---|---|
 | two grids trade the same coin | the exchange keeps one position per coin; two grids cannot tell theirs apart |
-| a grid says `shadow: true` | shadow mode is gone; starting would place real orders for a grid you believe is simulated |
 | `startBalance` or `strategyAllocationPct` is set | they were removed; silently ignoring them would leave you believing they still size the orders |
 | the grids on one dex use more than 100% | they would size orders from money that is not there |
 
@@ -461,7 +459,8 @@ at rest on etcd they are readable on your control-plane node's disk, and anyone 
 secrets` in the namespace can read them. For more, look at sealed-secrets, external-secrets or
 SOPS.
 
-The key in the Secret can withdraw funds. Keep only what the grid needs on that account.
+Unless it is an API wallet, the key in the Secret can withdraw funds. Keep only what the grid
+needs on that account.
 
 ---
 
@@ -476,18 +475,3 @@ Uninstalling stops the bot, not the orders it placed: cancel them and close the 
 Hyperliquid yourself. Installing again with the same grid settings picks the grid up where it
 was, because the orders still carry its fingerprint.
 
----
-
-## Upgrading from 0.3
-
-0.4 removes the database and shadow mode.
-
-- **Shadow grids** never placed orders, so there is nothing to carry over: uninstall 0.3, create
-  a testnet key Secret, remove `database` and every `shadow` from your values file, and install
-  0.4. The chart refuses a grid that still says `shadow: true`.
-- **Live grids** placed their orders without a cloid, so 0.4 does not recognise them. With a
-  position open it holds; with only resting buys it places its own buys next to them. Either
-  way: cancel the 0.3 orders and close the position before you upgrade.
-- The database and its Secret are no longer used; delete them when you no longer need the history.
-
----

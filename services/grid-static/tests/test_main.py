@@ -25,17 +25,6 @@ def test_a_valid_config_passes():
     assert skipped == []
 
 
-def test_shadow_true_refuses_to_start():
-    # Shadow mode is gone. Running anyway would place real orders for someone
-    # who believes they are simulating.
-    with pytest.raises(m.ConfigError, match="shadow mode was removed"):
-        m._validate(_cfg({"BTC-20": _grid(shadow=True)}))
-
-
-def test_shadow_false_is_accepted():
-    m._validate(_cfg({"BTC-20": _grid(shadow=False)}))
-
-
 def test_two_grids_on_one_coin_refuse_to_start():
     with pytest.raises(m.ConfigError, match="both trade BTC"):
         m._validate(_cfg({"BTC-20": _grid(), "BTC-10": _grid(num_lines=10)}))
@@ -74,8 +63,8 @@ def test_grids_on_different_dexes_each_have_their_own_100():
 
 def test_every_problem_is_reported_at_once():
     with pytest.raises(m.ConfigError) as e:
-        m._validate(_cfg({"BTC-20": _grid(shadow=True), "BTC-10": _grid(num_lines=10)}))
-    assert "shadow" in str(e.value) and "both trade BTC" in str(e.value)
+        m._validate(_cfg({"BTC-20": _grid(start_balance=500), "BTC-10": _grid(num_lines=10)}))
+    assert "start_balance" in str(e.value) and "both trade BTC" in str(e.value)
 
 
 def test_inactive_grids_are_left_out():
@@ -164,7 +153,7 @@ async def test_lifespan_waits_for_the_connector_and_runs_one_loop_per_grid(monke
 
 async def test_lifespan_refuses_a_bad_config_before_touching_anything(monkeypatch, tmp_path):
     _settings(tmp_path, monkeypatch, _VALID.replace("    leverage: 3\n",
-                                                     "    leverage: 3\n    shadow: true\n"))
+                                                     "    leverage: 3\n    start_balance: 500\n"))
     connector = MagicMock()
     monkeypatch.setattr(m, "ConnectorClient", connector)
     with pytest.raises(m.ConfigError):

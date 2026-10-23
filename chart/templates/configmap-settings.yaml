@@ -9,9 +9,6 @@
 {{- fail "grid.startBalance and grid.strategyAllocationPct were removed in chart 0.11.0: every grid now sizes its orders from the realised equity of its dex. Remove them from your values file and set each grid's allocationPct to the share of its dex it may use." }}
 {{- end }}
 {{- range $key, $c := .Values.grid.coins }}
-{{- if $c.shadow }}
-{{- fail (printf "grid %s has shadow: true, but shadow mode was removed in chart 0.4.0. Installing would place real orders for a grid you believe is simulated. Test on testnet instead (hyperliquid.testnet: true) and remove `shadow` from the grid." $key) }}
-{{- end }}
 {{- if $c.startBalance }}
 {{- fail (printf "grid %s sets startBalance, which was removed in chart 0.11.0: every grid now sizes its orders from the realised equity of its dex. Remove it and set allocationPct to the share of the dex the grid may use." $key) }}
 {{- end }}

@@ -14,7 +14,8 @@ grid you configured. A restart, a crash or a network outage is just another roun
 [![chart](https://github.com/njwgroeneveld/gridstatic/actions/workflows/publish-chart.yml/badge.svg)](https://github.com/njwgroeneveld/gridstatic/actions/workflows/publish-chart.yml)
 
 > A personal project, built to learn reliability engineering on a system that moves money. It runs
-> on Hyperliquid's testnet by default, currently with a BTC grid and a Nasdaq-100 grid. Not financial
+> on Hyperliquid's testnet by default, currently with a BTC grid and a Nasdaq-100 grid. The grids
+> are long only: they buy below the price and sell above it, and never go short. Not financial
 > advice, and no claim that a grid makes money.
 
 ---
@@ -23,7 +24,7 @@ grid you configured. A restart, a crash or a network outage is just another roun
 
 | | |
 |---|---|
-| **One source of truth** | An earlier version kept a database next to the exchange. Its three production incidents came from the two drifting apart, or from the database itself. Removing the database made the exchange the only state. |
+| **One source of truth** | Every order carries a label that the exchange stores with it: which grid placed it, and for which cell. So the open orders, the position and the fills on the exchange are the bot's whole state, and there is no second copy to keep in step. [Why this instead of a database](docs/design.md#why-the-orders-carry-their-own-data). |
 | **Fail-safe by default** | Every 30 seconds the bot runs a round: it reads the exchange (open orders, position, price, fills), works out what to cancel and place, and does it. If any read fails, that round places and cancels nothing: a failed read of the open orders must never look like "no orders", or the bot would place them all again. If the position holds more BTC (or whichever asset the grid trades) than the bot's own orders explain, for example after a manual trade, the grid goes *on hold*: it places no new buys, but still places sells, so what it holds can be sold. A config that is not safe to trade with makes the bot refuse to start. |
 | **Incident-driven design** | Each incident is written up with its root cause and fix in [`docs/postmortems.md`](docs/postmortems.md), and has a regression test. |
 | **Tested where it breaks** | Every decision is made in one function without network calls, so each situation can be tested without an exchange. Each safety rule was removed once on purpose, to check that a test then fails. Assumptions were checked against the real thing, not a mock: the SDK's actual signatures, the testnet API's actual answers, and the Kubernetes files the Helm chart actually generates. |
@@ -41,8 +42,8 @@ An example: a BTC grid from 80,000 to 88,000 with five lines, while the price is
 | Cell | Buys at | Sells at | Resting on the exchange now |
 |---|---|---|---|
 | 3 | 86,000 | 88,000 | nothing: a buy above the price would fill at once |
-| 2 | 84,000 | 86,000 | a sell at 86,000, for the coin it bought |
-| 1 | 82,000 | 84,000 | a sell at 84,000, for the coin it bought |
+| 2 | 84,000 | 86,000 | a sell at 86,000, for the BTC it bought |
+| 1 | 82,000 | 84,000 | a sell at 84,000, for the BTC it bought |
 | 0 | 80,000 | 82,000 | a buy at 80,000 |
 
 Five lines make four cells. Buys rest only below the price, and the top line has no cell above it.
@@ -53,7 +54,7 @@ profit is reinvested without the bot keeping a record of it.
 ```mermaid
 flowchart LR
     R[read orders, position,<br/>price, fills] --> T[tie fills to cells<br/>via the order id]
-    T --> D["decide what to change<br/>(no network calls)"]
+    T --> D[decide what<br/>to change]
     D --> A[cancel, then sell,<br/>then buy]
     A --> N[alerts, metrics,<br/>/status]
     R -. any read fails .-> X[do nothing<br/>this round]
@@ -64,10 +65,10 @@ Four ideas carry the design:
 - **The order id is the memory.** Every order's client order id encodes its grid and its cell, so
   after a restart the bot reads the book and knows where it stands, with no record and no price
   matching.
-- **One rule for unsold coin.** A cell's unsold coin is what it bought after its current sell went
-  out. That covers partial fills, restarts and a crash halfway through replacing an order.
-- **The position has to add up.** Before any new buy, every coin of the position must be explained
-  by the bot's own orders. If not, the grid holds and alerts. A buy too few costs a cycle; a buy
+- **One rule for what a cell holds.** What a cell has bought but not yet put up for sale is what
+  it bought after its current sell went out. That covers partial fills, restarts and a crash halfway through replacing an order.
+- **The position has to add up.** Before any new buy, the whole position must be explained by the
+  bot's own orders. If not, the grid holds and alerts. A buy too few costs a cycle; a buy
   too many is [incident 1](docs/postmortems.md#1-eight-buys-on-one-line-2026-09-09).
 - **Protection lives on the exchange.** The optional stop-loss is a reduce-only stop order, sized
   to the position every round, so it fires even when the cluster is down. After a stop the grid

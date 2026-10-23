@@ -24,14 +24,6 @@ def test_trade_closed_profit():
     assert "+$15.30" in msg
 
 
-def test_no_shadow_prefix_any_more():
-    # Shadow mode is gone; an old payload that still says so must not suggest
-    # the order was simulated.
-    msg = format_alert("buy_filled", "grid-static",
-                       {"coin": "BTC", "filled_price": 1, "sell_price": 2, "shadow": True})
-    assert "SHADOW" not in msg
-
-
 def test_edge_warning():
     msg = format_alert("edge_warning", "grid-static",
                        {"coin": "BTC", "side": "bottom", "level_price": 57000})
