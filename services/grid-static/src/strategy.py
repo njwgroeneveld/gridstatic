@@ -28,9 +28,16 @@ _UNREADABLE_ALERT_AFTER = 3          # failed rounds in a row before an alert
 
 def describe(e: Exception) -> str:
     """The kind of error and its message. A timeout has no message of its own,
-    and "exchange unreadable: " with nothing after it hides what went wrong."""
+    and "exchange unreadable: " with nothing after it hides what went wrong. An
+    error answer from the connector carries the exchange's reason as `detail`."""
     msg = str(e)
-    return f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+    text = f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+    response = getattr(e, "response", None)
+    try:
+        detail = response.json().get("detail") if response is not None else None
+    except Exception:
+        detail = None
+    return f"{text} ({detail})" if detail else text
 
 
 def dex_of(coin: str) -> str:
@@ -88,8 +95,11 @@ class StaticGrid:
         # A labelled counter exists only once touched. Without these, gain - loss
         # in PromQL is empty for as long as the grid has made no loss.
         for counter in (metrics.grid_realized_gain_usd, metrics.grid_realized_loss_usd,
-                        metrics.grid_fees_usd):
+                        metrics.grid_fees_usd, metrics.grid_trades_closed_total):
             counter.labels(coin=self.coin)
+        for side in (BUY, SELL):
+            metrics.grid_fills_total.labels(coin=self.coin, side=side)
+            metrics.grid_orders_placed_total.labels(coin=self.coin, side=side)
         metrics.grid_lower_bound.labels(coin=self.coin).set(self.levels[0])
         metrics.grid_upper_bound.labels(coin=self.coin).set(self.levels[-1])
         if self.stop_loss is not None:
@@ -293,6 +303,8 @@ class StaticGrid:
                 failed_cancels.add(c.oid)
                 log.error(f"[{self.coin_key}] cancel of {c.oid} failed: {describe(e)}")
                 metrics.grid_errors_total.labels(type="order_cancel").inc()
+                await self._notice(f"{self.coin_key}: a cancel was refused: {describe(e)}",
+                                   key="cancel-refused")
 
         for pl in p.places:
             if pl.replaces is not None and pl.replaces in failed_cancels:
@@ -314,6 +326,11 @@ class StaticGrid:
                 log.error(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} "
                           f"(cell {pl.cell}) failed: {describe(e)}")
                 metrics.grid_errors_total.labels(type="order_placement").inc()
+                # At most hourly. If every order is refused, the likely cause is the
+                # key: an expired API wallet keeps reading fine and cannot trade.
+                await self._notice(f"{self.coin_key}: an order was refused: {describe(e)}. "
+                                   f"If every order is refused, check the key: an API wallet "
+                                   f"may have expired.", key="order-refused")
                 continue
             if res.get("oid") is not None:
                 self._cloid_of[int(res["oid"])] = cloid

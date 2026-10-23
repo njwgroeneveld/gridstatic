@@ -700,3 +700,50 @@ async def test_a_skipped_round_names_the_kind_of_error(grid, connector, caplog):
     connector.get_fills.side_effect = httpx.ReadTimeout("")
     assert await grid.run_round() is None
     assert "exchange unreadable: ReadTimeout" in caplog.text
+
+
+# ── refused orders, and counters that start at zero ────────────────────────────
+
+def _refused(detail="User or API Wallet does not exist."):
+    import httpx
+    req = httpx.Request("POST", "http://connector/orders/limit")
+    resp = httpx.Response(502, json={"detail": detail}, request=req)
+    return httpx.HTTPStatusError("Server error '502 Bad Gateway'", request=req, response=resp)
+
+
+async def test_a_refused_order_is_announced_with_the_exchange_s_reason(grid, connector, alerter):
+    # While the bot runs, a refused order used to be logged only: an expired API
+    # wallet would have gone unnoticed until the next restart.
+    await grid.start()
+    connector.place_limit.side_effect = _refused()
+    await grid.run_round()
+    refused = [c.args[1]["message"] for c in alerter.send_alert.call_args_list
+               if "refused" in c.args[1].get("message", "")]
+    assert len(refused) == 1
+    assert "User or API Wallet does not exist." in refused[0]
+    assert "API wallet" in refused[0]
+
+
+async def test_a_refused_order_is_announced_at_most_once_an_hour(grid, connector, alerter, clock):
+    await grid.start()
+    connector.place_limit.side_effect = _refused()
+    await grid.run_round()
+    clock.ms += 30_000
+    await grid.run_round()
+    refused = [c for c in alerter.send_alert.call_args_list
+               if "refused" in c.args[1].get("message", "")]
+    assert len(refused) == 1
+
+
+async def test_grid_counters_exist_at_zero_before_the_first_event(config, connector, alerter, clock):
+    # A counter born at 1 has no earlier sample: increase() never shows the first
+    # fill after a restart.
+    from prometheus_client import REGISTRY
+    from src.strategy import StaticGrid
+    config["coin"] = "ZERO"
+    StaticGrid("ZERO", config, connector=connector, alerter=alerter, clock=clock)
+    for side in ("BUY", "SELL"):
+        assert REGISTRY.get_sample_value("grid_fills_total", {"coin": "ZERO", "side": side}) == 0.0
+        assert REGISTRY.get_sample_value("grid_orders_placed_total",
+                                         {"coin": "ZERO", "side": side}) == 0.0
+    assert REGISTRY.get_sample_value("grid_trades_closed_total", {"coin": "ZERO"}) == 0.0

@@ -52,7 +52,9 @@ same coin, makes it hold. That is correct, because it can no longer tell what is
 can trade, but it cannot withdraw or move funds, so a leaked key cannot drain the account. At
 startup the connector asks the exchange (`userRole`) whether the key is an API wallet and whether
 `wallet_address` is a subaccount, and signs accordingly. An API wallet expires on the date you set
-when you created it; after that the exchange refuses its orders and the grid holds with an alert.
+when you created it; after that the exchange refuses its orders. The bot keeps reading and
+retrying, and alerts at most once an hour per grid that orders are refused, with the exchange's
+reason.
 
 ---
 

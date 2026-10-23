@@ -293,7 +293,8 @@ probe, so a pod is only "ready" once its application has actually started.
   fills; there is no total since the start, and the exchange keeps only the last 10,000 fills.
   The Prometheus counters add up while the pod runs.
 - **An API wallet expires.** It is the safer key (it cannot withdraw), but it stops working on the
-  date set when it was created, and the grid then holds until a new one is in the Secret.
+  date set when it was created. Reading still works, so the grid keeps running but every order
+  is refused; the bot alerts that once an hour per grid until a new key is in the Secret.
 - **A long outage needs a look.** Coin bought more than `fillLookbackHours` before the bot saw it
   cannot be tied to its cell. The grid holds, and a person decides. On a thin book a partial fill
   too small to sell can age out the same way; see incident 4.
