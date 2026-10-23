@@ -138,7 +138,7 @@ class StaticGrid:
             fills = await self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms)
             await self._tie(fills, limit=None)
         except Exception as e:
-            log.warning(f"[{self.coin_key}] warming the fill cache failed: {e}")
+            log.warning(f"[{self.coin_key}] warming the fill cache failed: {describe(e)}")
         await self._check_size()
         await self._announce_cap()
         size = f"${self.size_usd} per line now" if self.size_usd is not None else "size unread"
@@ -156,7 +156,7 @@ class StaticGrid:
                 self.connector.get_account_value(dex=dex),
                 self.connector.get_positions(dex=dex))
         except Exception as e:
-            log.warning(f"[{self.coin_key}] size check skipped: {e}")
+            log.warning(f"[{self.coin_key}] size check skipped: {describe(e)}")
             return
         equity = realised_equity(value, positions)
         self._set_size(equity)
@@ -187,7 +187,7 @@ class StaticGrid:
             try:
                 status = await self.connector.get_order_status(oid)
             except Exception as e:
-                log.warning(f"[{self.coin_key}] order status of {oid} unreadable: {e}")
+                log.warning(f"[{self.coin_key}] order status of {oid} unreadable: {describe(e)}")
                 break
             # "unknownOid" may be the exchange not having caught up yet; remembering
             # it as "not ours" would keep the grid on hold for good.
@@ -291,7 +291,7 @@ class StaticGrid:
                 log.info(f"[{self.coin_key}] cancelled {c.side} on cell {c.cell}: {c.reason}")
             except Exception as e:
                 failed_cancels.add(c.oid)
-                log.error(f"[{self.coin_key}] cancel of {c.oid} failed: {e}")
+                log.error(f"[{self.coin_key}] cancel of {c.oid} failed: {describe(e)}")
                 metrics.grid_errors_total.labels(type="order_cancel").inc()
 
         for pl in p.places:
@@ -312,7 +312,7 @@ class StaticGrid:
                         cloid=cloid, reduce_only=pl.reduce_only)
             except Exception as e:
                 log.error(f"[{self.coin_key}] {pl.side} {pl.sz} at {pl.price} "
-                          f"(cell {pl.cell}) failed: {e}")
+                          f"(cell {pl.cell}) failed: {describe(e)}")
                 metrics.grid_errors_total.labels(type="order_placement").inc()
                 continue
             if res.get("oid") is not None:
@@ -498,9 +498,9 @@ class StaticGrid:
                 await self.start()
                 break
             except Exception as e:
-                log.error(f"[{self.coin_key}] start failed, retrying: {e}")
+                log.error(f"[{self.coin_key}] start failed, retrying: {describe(e)}")
                 metrics.grid_errors_total.labels(type="start").inc()
-                await self._notice(f"{self.coin_key} cannot start and keeps retrying: {e}",
+                await self._notice(f"{self.coin_key} cannot start and keeps retrying: {describe(e)}",
                                    key="start")
                 await asyncio.sleep(self.interval)
         while True:
