@@ -23,14 +23,13 @@ is built this way, see the [README](../README.md) and [design decisions](design.
 
 | | why |
 |---|---|
-| A Kubernetes cluster | k3s, minikube or kubeadm; any of them works |
+| A Kubernetes cluster | any: k3s, minikube, or one set up with kubeadm |
 | `kubectl` with access to it | the installation runs from your machine |
 | `helm` 3 | `brew install helm`, `winget install Helm.Helm`, or the [install script](https://helm.sh/docs/intro/install/) |
 | A Hyperliquid testnet account | [app.hyperliquid-testnet.xyz](https://app.hyperliquid-testnet.xyz), with test USDC from its faucet |
 | Outbound internet from the cluster | to Hyperliquid, and to ghcr.io for the images |
 
-You do **not** need a database, a StorageClass (the stack has no volumes), an ingress,
-cert-manager or a service mesh.
+Nothing else: no database and no persistent storage, since the bot keeps no state of its own.
 
 ### Give the bot an account of its own
 
@@ -163,8 +162,8 @@ kubectl -n gridstatic logs deploy/gridstatic-grid-static -f
 ```
 
 The bot should log `started: 20 lines 75000-83000, $45.0 per line now, 1x, 90% of its dex` (with $1,000 on the default dex), followed by a `BUY` line
-for every cell below the price. If it logs `Refusing to start`, the message below it names the
-setting it will not trade with.
+for every cell below the price. If it logs `Refusing to start` instead, the next line says which
+setting is wrong and why; fix it in your values file and upgrade.
 
 ---
 
@@ -177,11 +176,9 @@ All settings live in your values file. The full list with comments is in
 
 ```yaml
 grid:
-  roundIntervalSeconds: 30        # how often the bot reads the exchange and repairs the grid
-  fillLookbackHours: 72           # how far back it looks for coin a cell bought but did not sell
   coins:
     SOL-20:                       # free-form label, used in logs and alerts
-      coin: SOL                   # Hyperliquid symbol
+      coin: SOL                   # the market as Hyperliquid names it; HIP-3: "dex:NAME"
       active: true
       allocationPct: 90           # share of its dex's realised equity
       maxEquityUsd: 500           # optional: size from at most this much; leave out for no limit
@@ -189,6 +186,7 @@ grid:
       upper: 107
       numLines: 20
       leverage: 1
+      stopLoss: 88                # optional: sell everything below this; must lie below lower
 ```
 
 **Order size per line** follows the money on the grid's dex, every round:
@@ -220,15 +218,13 @@ and stops; the upgrade only restarts grid-static for a few seconds. On a shared 
 other grids' `allocationPct` first if the total would pass 100. That only makes their next buys
 smaller.
 
-**The bot refuses to start**, with a message that names the problem, when:
+**At startup the bot checks the settings**, and refuses to start, naming the problem, when two
+grids trade the same coin (the exchange keeps one position per coin, so they could not tell theirs
+apart), when the grids on one dex together use more than 100% of it, or when a value is out of
+range, such as a `stopLoss` above `lower`. A wrong setting then costs a restart, not money.
 
-| | why |
-|---|---|
-| two grids trade the same coin | the exchange keeps one position per coin; two grids cannot tell theirs apart |
-| `startBalance` or `strategyAllocationPct` is set | they were removed; silently ignoring them would leave you believing they still size the orders |
-| the grids on one dex use more than 100% | they would size orders from money that is not there |
-
-An order under $10 no longer stops the bot: the size depends on the money on the dex, so it warns at startup and leaves those cells empty until the dex holds more.
+**An order under the exchange's $10 minimum** only gives a warning: the size depends on the money
+on the dex, which can change. Those cells stay empty until the dex holds enough.
 
 `grid.coins` has no default: the chart refuses to install without an active grid. That is on
 purpose. Helm merges maps, so a default grid would quietly run next to the ones in your file.
@@ -237,6 +233,8 @@ purpose. Helm merges maps, so a default grid would quietly run next to the ones 
 
 | key | default | |
 |---|---|---|
+| `grid.roundIntervalSeconds` | `30` | how often each grid runs a round |
+| `grid.fillLookbackHours` | `72` | how far back the bot reads fills. Only matters after an outage: a buy that filled more than this long before the bot saw it cannot be tied to its cell, and the grid holds |
 | `hyperliquid.testnet` | `true` | `false` means mainnet and real money |
 | `hyperliquid.existingSecret` | *(required)* | Secret with `private_key` and `wallet_address` |
 | `telegram.enabled` | `false` | deploys the alerter |
@@ -258,7 +256,8 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 > carries a fingerprint of exactly those five settings. After the change, the old grid's orders
 > carry a different fingerprint: the bot leaves them alone, but it also holds, because its position no
 > longer adds up. Cancel the old orders and close or keep the old position deliberately before
-> you change them. Changing `allocationPct` is safe; it applies to new orders.
+> you change them. Changing `allocationPct` or `maxEquityUsd` is safe: the grid does not hold, it
+> only sizes its next buys differently.
 
 ---
 
@@ -301,15 +300,8 @@ from a regular market:
 ## Stop-loss (optional)
 
 A grid without a stop-loss holds every position it bought on the way down for as long as the
-price stays below the range. With one, it sells everything when the price falls through it:
-
-```yaml
-    BTC-10:
-      coin: BTC
-      lower: 82000
-      upper: 91000
-      stopLoss: 80000              # optional; must lie below lower
-```
+price stays below the range. With one (`stopLoss` in the [grid example](#grids)), it sells the
+whole position when the price falls through it.
 
 - **It lives on the exchange.** A reduce-only stop-market order, always the size of the whole
   position, kept up to date every round. It fires even when the bot or your cluster is down.
@@ -326,15 +318,15 @@ makes that less likely and costs more when it does fire. Leave `stopLoss` out fo
 
 ## When the grid holds
 
-On hold, the bot places **no new buys**. It still places sells for coin it can account for, and
+On hold, the bot places **no new buys**. It still places sells for what its cells hold, and
 it resumes by itself as soon as the cause is gone. You get a `grid_hold` alert with the reason,
 and a `hold_cleared` alert when it resumes. `/status` shows it too.
 
 | reason | what to do |
 |---|---|
-| the position has coin no cell accounts for | a manual position, another bot on the coin, or fills older than `fillLookbackHours`. Close the extra position, or sell it yourself. |
+| the position holds more than the cells account for | a manual position, another bot on the coin, or fills older than `fillLookbackHours`. Close the extra position, or sell it yourself. |
 | orders from an earlier grid on this coin | you changed the grid's bounds, lines or leverage. Cancel the old orders, or restore the old settings. |
-| resting sells and unsold coin exceed the position | someone sold coin the bot had a sell for, or closed the position by hand. Cancel the excess sell; unsold coin without a sell clears once its buy is older than `fillLookbackHours`. |
+| the bot's sells and what its cells hold add up to more than the position | someone sold what the bot had a sell for, or closed the position by hand. Cancel the excess sell; an amount without a sell clears once its buy is older than `fillLookbackHours`. |
 | none of the orders placed last round is on the book or filled | the bot reads another account than it trades on. Check `wallet_address`; see [Which key](#which-key). |
 | short position | a grid only ever holds long. Close the short. |
 
@@ -471,7 +463,12 @@ helm uninstall gridstatic -n gridstatic
 kubectl delete namespace gridstatic
 ```
 
-Uninstalling stops the bot, not the orders it placed: cancel them and close the position on
-Hyperliquid yourself. Installing again with the same grid settings picks the grid up where it
-was, because the orders still carry its fingerprint.
+Uninstalling stops the bot, nothing else: its orders, its position and its stop-loss stay on the
+exchange, and the stop keeps protecting the position.
+
+- **To stop for good,** cancel the orders and close the position on Hyperliquid yourself.
+- **To come back later,** leave everything as it is. Installing again with the same grid settings
+  picks the grid up where it was, because its orders still carry its fingerprint. Buys that filled
+  while it was gone get their sells in the first round, unless they are older than
+  `fillLookbackHours`; those make the grid hold.
 

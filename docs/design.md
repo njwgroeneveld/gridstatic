@@ -118,18 +118,13 @@ reads "bought since the last sell fill": 0.0010, and a sell of 0.0010 goes out. 
 `residual = position − resting sells − bought, not yet for sale`. In a healthy grid it is zero within half a
 lot. A position of 0.0030 BTC, with sells of 0.0010 on cells 2 and 5 and 0.0010 unsold on cell 7,
 adds up. A position of 0.0034 leaves 0.0004 BTC that no cell accounts for (bought by hand, say),
-and the grid holds. Any of these makes the grid hold, and no new buy goes out:
-
-| | grid holds: no new buys |
-|---|---|
-| residual > 0 | BTC (or whichever asset the grid trades) that no cell accounts for: a manual position, another bot, fills older than the look-back |
-| residual < 0 | the bot's sells and what its cells hold add up to more than the position |
-| orders with another fingerprint | an earlier grid on this market |
-| short position | a grid only ever holds long |
-| none of last round's orders on the book or filled | the bot reads another account than it trades on |
+and the grid holds. A residual below zero holds too: the bot's sells and what its cells hold add
+up to more than the position. So do orders of an earlier grid, a short position, and last round's
+orders being nowhere on the book or in the fills. Every reason, with what to do about it, is in
+[operations.md](operations.md#when-the-grid-holds).
 
 On hold, sells still go out for what the cells hold, and the grid resumes by itself once
-the cause is gone. The last row matters more than it looks: with the exchange as the only truth,
+the cause is gone. The last reason matters more than it looks: with the exchange as the only truth,
 a bot that reads the wrong account sees an empty book every round, finds nothing unexplained, and
 would buy a full layer again every 30 seconds. An API wallet configured without the account it
 trades for does exactly that.
@@ -252,10 +247,10 @@ with such a configuration.
 
 ### Refusing to start
 
-The bot refuses a configuration it must not trade with, and names the problem: two grids on one
-coin, a removed `startBalance`, or grids on one dex using more than 100% of it. Refusing costs nothing; trading on a wrong assumption costs money. An order under the
-exchange's $10 minimum does not block starting: the size depends on the money on the dex, so the
-bot warns instead (see `operations.md`).
+The bot refuses a configuration it must not trade with, and names the problem; the checks are
+listed in [operations.md](operations.md#grids). Refusing costs nothing; trading on a wrong
+assumption costs money. An order under the exchange's $10 minimum only warns: the size depends on
+the money on the dex, which can change.
 
 ---
 

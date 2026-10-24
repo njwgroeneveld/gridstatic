@@ -26,9 +26,6 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-_REMOVED = ("start_balance", "strategy_allocation_pct")
-
-
 def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
     """The grids to run and the entries skipped.
 
@@ -37,12 +34,6 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
     errors, grids, skipped = [], [], []
     owner_of: dict[str, str] = {}
     share_of_dex: dict[str, float] = {}
-
-    for key in _REMOVED:
-        if key in cfg:
-            errors.append(f"{key} was removed: every grid now sizes its orders from the "
-                          f"realised equity of its dex. Remove it; set each grid's "
-                          f"allocation_pct to the share of its dex it may use.")
 
     for key, c in (cfg.get("coins") or {}).items():
         if not c.get("active"):
@@ -55,10 +46,6 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
             skipped.append(f"{key}: strategy_type={strategy_type} is not supported "
                            f"by grid-static; grid not started")
             continue
-        for removed in _REMOVED:
-            if removed in c:
-                errors.append(f"{key}: {removed} was removed: the grid sizes its orders from "
-                              f"the realised equity of its dex. Remove it from the grid.")
         coin = c["coin"]
         if coin in owner_of:
             errors.append(f"{key} and {owner_of[coin]} both trade {coin}. One grid per coin: "

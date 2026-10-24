@@ -114,6 +114,12 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
                  f"orders | {len(fills)} fills in {lookback_h:g}h"
                  + (f" | dex '{dex}' balance {float(state['marginSummary']['accountValue']):g}"
                     if dex else ""))
+    if position == 0 and not orders and not fills:
+        # The usual cause is the wrong address, and then every line below is about
+        # an account the bot never touches.
+        print(INFO + "nothing of this grid on this account. Is it the one the bot trades on? "
+                     "For a subaccount pass the subaccount's address, for an API wallet the "
+                     "account it trades for -- not the key's own address.")
 
     # ── invariants, checked on the raw data rather than through reconcile ──
     ours, earlier, foreign = [], [], []
