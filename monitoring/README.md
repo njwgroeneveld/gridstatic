@@ -11,7 +11,7 @@ and alerts, for a cluster that runs
 | `alerts.yaml` | two alert rules, `GridstaticDown` and `GridstaticHold` |
 | `dashboard.json` | the Grafana dashboard |
 
-![The dashboard: grids, alerts and the exchange API](screenshots/dashboard-grids-alerts-exchange.png)
+![The dashboard: grids and alerts](screenshots/dashboard-grids-alerts.png)
 
 *Two grids on Hyperliquid's testnet: BTC and the Nasdaq-100 (`xyz:XYZ100`, a HIP-3 market).*
 
@@ -38,6 +38,8 @@ fire are [below](#alerts).
 
 ### Exchange API: what the bot waits for
 
+![The exchange API and health rows](screenshots/dashboard-exchange-health.png)
+
 The connector is the only service that talks to Hyperliquid, and it times every request where it
 goes over the network. Hyperliquid has two endpoints: `/info` to read and `/exchange` to act. The
 panels name the request types:
@@ -61,8 +63,6 @@ panels name the request types:
 Only request types made in the time range are shown; the start-up ones disappear after a while.
 
 ### Health: is the service itself all right
-
-![The health row](screenshots/dashboard-health.png)
 
 | panel | what it shows | how to read it |
 |---|---|---|
