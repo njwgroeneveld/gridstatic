@@ -103,6 +103,18 @@ def get_account_value(dex: str = Query("")):
     return {"account_value": _ex().get_account_value(dex=dex)}
 
 
+@app.get("/account")
+def get_account(dex: str = Query("")):
+    """Account value and positions of one dex, in one read. /account/value and
+    /positions stay for a grid-static that does not ask for this yet."""
+    try:
+        return _ex().get_account(dex=dex)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/price/{coin}")
 def get_price(coin: str):
     """The mark price. A grid decides which lines sit below the price from this,

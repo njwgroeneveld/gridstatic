@@ -510,6 +510,14 @@ async def test_the_margin_check_on_the_default_dex(grid, connector):
     connector.get_account_value.assert_awaited_once_with(dex="")
 
 
+async def test_a_round_reads_value_and_position_in_one_request(grid, connector):
+    # Two requests for the same clearinghouseState doubled the heaviest read.
+    await grid.start()
+    connector.get_account.reset_mock()
+    await grid.run_round()
+    connector.get_account.assert_awaited_once_with(dex="")
+
+
 # ── stop-loss ──────────────────────────────────────────────────────────────────
 
 def _stop_grid(config, connector, alerter, clock, stop_loss=96.0):

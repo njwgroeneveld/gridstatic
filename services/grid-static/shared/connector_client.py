@@ -24,6 +24,11 @@ class ConnectorClient:
     async def get_account_value(self, dex: str = "") -> float:
         return float((await self._get("/account/value", dex=dex))["account_value"])
 
+    async def get_account(self, dex: str = "") -> tuple[float, dict[str, dict]]:
+        """The account value and positions of one dex, from one read."""
+        a = await self._get("/account", dex=dex)
+        return float(a["account_value"]), a["positions"]
+
     async def get_price(self, coin: str) -> float:
         """The mark price: on a thin book the mid moves with the grid's own orders."""
         return float((await self._get(f"/price/{coin}"))["mark_px"])

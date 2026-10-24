@@ -340,6 +340,30 @@ def test_an_unknown_coin_has_no_lot_size_rather_than_a_guess():
         client.get_sz_decimals("DOGE")
 
 
+@pytest.mark.parametrize("dex, coin", [("xyz", "xyz:XYZ100"), ("", "BTC")])
+def test_account_reads_the_state_of_its_dex_once_for_value_and_positions(dex, coin):
+    client = _hip3_client()
+    client._info.user_state.return_value = {
+        "marginSummary": {"accountValue": "250.5"},
+        "assetPositions": [{"position": {"coin": coin, "szi": "0.002", "entryPx": "30000",
+                                         "unrealizedPnl": "-1.5"}}]}
+    client._info.spot_user_state.return_value = {"balances": [
+        {"coin": "USDC", "total": "100", "hold": "10"}]}
+    account = client.get_account(dex)
+    client._info.user_state.assert_called_once_with("0xTEST", dex=dex)
+    # spot USDC counts on the default dex only
+    assert account["account_value"] == (250.5 if dex else 340.5)
+    assert account["positions"] == {"xyz:XYZ100" if dex else "BTC": {
+        "szi": 0.002, "entry_px": 30000.0, "unrealized_pnl": -1.5}}
+
+
+def test_an_unreadable_account_raises_rather_than_reads_as_empty():
+    client = _hip3_client()
+    client._info.user_state.side_effect = ConnectionError("down")
+    with pytest.raises(ConnectionError):
+        client.get_account("xyz")
+
+
 def test_account_value_of_a_hip3_dex_is_its_own_balance():
     client = _hip3_client()
     client._info.user_state.side_effect = lambda addr, dex="": {

@@ -144,6 +144,21 @@ Every 30 seconds each grid runs one round. These are its steps, in the order the
 6. report fills, closed cycles, hold changes
 ```
 
+What each step asks the exchange, and why:
+
+| step | request (Hyperliquid info API) | what it is for |
+|---|---|---|
+| 1 | `frontendOpenOrders` | the bot's resting orders, with their cloids: which cells have a buy or a sell |
+| 1 | `metaAndAssetCtxs` | the mark price, which decides which lines are below the price |
+| 2 | `clearinghouseState` for the grid's dex | the position, and the account value of the dex |
+| 2 | `spotClearinghouseState` (main dex only) | spot USDC, which counts towards the main dex's balance |
+| 2 | `userFillsByTime` | what filled since the look-back: a buy that filled and has no sell yet |
+| 3 | `orderStatus`, only when needed | the cloid of a filled order that has left the book and is not in the bot's memory |
+| 5 | `order`, `cancel` (exchange API, signed) | the changes `reconcile` decided on |
+
+The account value, minus unrealised P&L, sizes the next buys
+([below](#order-size-follows-realised-equity)).
+
 On testnet a round takes 2 to 3 seconds, almost always under 5: nearly all of it is waiting for
 the exchange. The grids run their rounds side by side.
 

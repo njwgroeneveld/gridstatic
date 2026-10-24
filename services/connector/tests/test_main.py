@@ -108,6 +108,22 @@ def test_account_value_route_takes_a_dex():
     fake.get_account_value.assert_called_once_with(dex="xyz")
 
 
+def test_account_route_gives_value_and_positions_of_one_dex():
+    fake = MagicMock()
+    fake.get_account.return_value = {"account_value": 250.5, "positions": {}}
+    with patch("src.main._ex", return_value=fake):
+        r = client.get("/account", params={"dex": "xyz"})
+    assert r.json() == {"account_value": 250.5, "positions": {}}
+    fake.get_account.assert_called_once_with(dex="xyz")
+
+
+def test_account_route_answers_502_when_the_exchange_cannot_be_read():
+    fake = MagicMock()
+    fake.get_account.side_effect = ConnectionError("down")
+    with patch("src.main._ex", return_value=fake):
+        assert client.get("/account").status_code == 502
+
+
 def test_perp_dexs_come_from_the_environment(monkeypatch):
     import src.main as m
     monkeypatch.setenv("HYPERLIQUID_PERP_DEXS", "xyz, flx ,,")

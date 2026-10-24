@@ -162,9 +162,7 @@ class StaticGrid:
         dex = dex_of(self.coin)
         try:
             # A HIP-3 dex keeps a balance of its own; that is the one that pays.
-            value, positions = await asyncio.gather(
-                self.connector.get_account_value(dex=dex),
-                self.connector.get_positions(dex=dex))
+            value, positions = await self.connector.get_account(dex=dex)
         except Exception as e:
             log.warning(f"[{self.coin_key}] size check skipped: {describe(e)}")
             return
@@ -228,10 +226,9 @@ class StaticGrid:
             orders, price = await asyncio.gather(
                 self.connector.get_open_orders(self.coin),
                 self.connector.get_price(self.coin))
-            positions, fills, value = await asyncio.gather(
-                self.connector.get_positions(dex=dex_of(self.coin)),
-                self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms),
-                self.connector.get_account_value(dex=dex_of(self.coin)))
+            (value, positions), fills = await asyncio.gather(
+                self.connector.get_account(dex=dex_of(self.coin)),
+                self.connector.get_fills(self.coin, self._now_ms() - self.lookback_ms))
             # Sized every round: realised equity moves with closed profit, not with
             # the price of the open position. Orders already resting keep their size.
             self._set_size(realised_equity(value, positions))

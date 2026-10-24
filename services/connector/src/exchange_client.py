@@ -87,44 +87,51 @@ class ExchangeClient:
                 raise KeyError(f"{coin} is not listed on dex '{dex_of(coin)}'")
         return self._sz_cache[coin]
 
-    def get_account_value(self, dex: str = "") -> float:
+    def _value_of(self, state: dict, dex: str) -> float:
         """A HIP-3 dex keeps a balance of its own; only the default dex shares
         with spot USDC."""
-        if dex:
-            state = self._info.user_state(self._wallet_address, dex=dex)
-            return float(state.get("marginSummary", {}).get("accountValue", 0.0))
-        spot = self._info.spot_user_state(self._wallet_address)
-        usdc_total, usdc_hold = 0.0, 0.0
-        for b in spot.get("balances", []):
-            if b.get("coin") == "USDC":
-                usdc_total = float(b.get("total", 0.0))
-                usdc_hold = float(b.get("hold", 0.0))
-                break
-        state = self._info.user_state(self._wallet_address)
         perps_value = float(state.get("marginSummary", {}).get("accountValue", 0.0))
-        return (usdc_total - usdc_hold) + perps_value
+        if dex:
+            return perps_value
+        spot = self._info.spot_user_state(self._wallet_address)
+        usdc = next((b for b in spot.get("balances", []) if b.get("coin") == "USDC"), {})
+        return float(usdc.get("total", 0.0)) - float(usdc.get("hold", 0.0)) + perps_value
+
+    @staticmethod
+    def _positions_of(state: dict, dex: str) -> dict[str, dict]:
+        result = {}
+        for pos in state.get("assetPositions", []):
+            p = pos.get("position", {})
+            coin = p.get("coin")
+            szi = float(p.get("szi") or 0)
+            if coin and abs(szi) > 0:
+                result[_full_name(coin, dex)] = {
+                    "szi": szi,
+                    "entry_px": float(p.get("entryPx") or 0),
+                    # grid-static sizes its orders from realised equity: the account
+                    # value minus this, so a price move does not resize the grid.
+                    "unrealized_pnl": float(p.get("unrealizedPnl") or 0),
+                }
+        return result
+
+    def get_account(self, dex: str = "") -> dict:
+        """The account value and the positions of one dex, from one read of its
+        state: a grid needs both every round, and asking twice doubled the
+        heaviest request of the round."""
+        state = self._info.user_state(self._wallet_address, dex=dex)
+        return {"account_value": self._value_of(state, dex),
+                "positions": self._positions_of(state, dex)}
+
+    def get_account_value(self, dex: str = "") -> float:
+        return self._value_of(self._info.user_state(self._wallet_address, dex=dex), dex)
 
     def get_open_positions(self, dex: str | None = None) -> dict[str, dict]:
         """Positions under their full name: on one dex, or on every dex this client
         knows when dex is None. Any dex that cannot be read raises: an unreadable
-        position is never a flat one. A grid asks for its own dex only -- one
-        read instead of one per dex, and a dex that is down no longer stops the
-        grids on the others."""
+        position is never a flat one."""
         result = {}
         for dex in (self._dexes if dex is None else [dex]):
-            state = self._info.user_state(self._wallet_address, dex=dex)
-            for pos in state.get("assetPositions", []):
-                p = pos.get("position", {})
-                coin = p.get("coin")
-                szi = float(p.get("szi") or 0)
-                if coin and abs(szi) > 0:
-                    result[_full_name(coin, dex)] = {
-                        "szi": szi,
-                        "entry_px": float(p.get("entryPx") or 0),
-                        # grid-static sizes its orders from realised equity: the account
-                        # value minus this, so a price move does not resize the grid.
-                        "unrealized_pnl": float(p.get("unrealizedPnl") or 0),
-                    }
+            result.update(self._positions_of(self._info.user_state(self._wallet_address, dex=dex), dex))
         return result
 
     def get_open_orders(self, coin: str) -> list[dict]:
