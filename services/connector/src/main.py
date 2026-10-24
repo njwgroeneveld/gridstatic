@@ -98,15 +98,9 @@ def get_mids():
         raise HTTPException(status_code=502, detail=str(e))
 
 
-@app.get("/account/value")
-def get_account_value(dex: str = Query("")):
-    return {"account_value": _ex().get_account_value(dex=dex)}
-
-
 @app.get("/account")
 def get_account(dex: str = Query("")):
-    """Account value and positions of one dex, in one read. /account/value and
-    /positions stay for a grid-static that does not ask for this yet."""
+    """Account value and positions of one dex, in one read."""
     try:
         return _ex().get_account(dex=dex)
     except HTTPException:
@@ -121,18 +115,6 @@ def get_price(coin: str):
     not from the mid: on a thin book the mid moves with the grid's own orders."""
     try:
         return {"coin": coin, "mark_px": _info.get_mark_price(coin)}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-
-@app.get("/positions")
-def get_positions(dex: str | None = Query(None)):
-    # An unreadable position must never look like "no position". Without dex:
-    # every dex, as before -- an older grid-static that does not send it still works.
-    try:
-        return _ex().get_open_positions(dex)
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

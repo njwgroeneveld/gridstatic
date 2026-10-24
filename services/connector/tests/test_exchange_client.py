@@ -14,7 +14,7 @@ def _make_client() -> ExchangeClient:
     return client
 
 
-def test_get_open_positions_excludes_zero_szi():
+def test_a_position_of_zero_is_no_position():
     client = _make_client()
     client._info.user_state.return_value = {
         "assetPositions": [
@@ -22,7 +22,8 @@ def test_get_open_positions_excludes_zero_szi():
             {"position": {"coin": "ETH", "szi": "0",    "entryPx": "2450.0"}},
         ]
     }
-    result = client.get_open_positions()
+    client._info.spot_user_state.return_value = {"balances": []}
+    result = client.get_account("")["positions"]
     assert "BTC" in result
     assert result["BTC"] == {"szi": 0.01, "entry_px": 103000.0, "unrealized_pnl": 0.0}
     assert "ETH" not in result
@@ -258,57 +259,16 @@ def test_open_orders_of_a_hip3_coin_are_read_from_its_dex():
     client._info.frontend_open_orders.assert_called_once_with("0xTEST", dex="xyz")
 
 
-def test_positions_cover_every_dex_under_their_full_name():
-    client = _hip3_client()
-    states = {
-        "": {"assetPositions": [{"position": {"coin": "BTC", "szi": "0.01", "entryPx": "1"}}]},
-        "xyz": {"assetPositions": [{"position": {"coin": "xyz:XYZ100", "szi": "0.002",
-                                                 "entryPx": "30000"}}]},
-    }
-    client._info.user_state.side_effect = lambda addr, dex="": states[dex]
-    pos = client.get_open_positions()
-    assert pos["BTC"]["szi"] == 0.01
-    assert pos["xyz:XYZ100"]["szi"] == 0.002
-
-
 def test_a_position_named_without_its_dex_prefix_still_gets_it():
     # Whether the exchange prefixes coin names in clearinghouseState is not
     # something to bet the position check on.
     client = _hip3_client()
-    states = {"": {"assetPositions": []},
-              "xyz": {"assetPositions": [{"position": {"coin": "XYZ100", "szi": "0.002",
-                                                       "entryPx": "30000"}}]}}
-    client._info.user_state.side_effect = lambda addr, dex="": states[dex]
-    assert "xyz:XYZ100" in client.get_open_positions()
+    client._info.user_state.return_value = {"assetPositions": [
+        {"position": {"coin": "XYZ100", "szi": "0.002", "entryPx": "30000"}}]}
+    assert "xyz:XYZ100" in client.get_account("xyz")["positions"]
 
 
-def test_an_unreadable_dex_is_never_an_empty_position():
-    client = _hip3_client()
-
-    def state(addr, dex=""):
-        if dex == "xyz":
-            raise ConnectionError("down")
-        return {"assetPositions": []}
-
-    client._info.user_state.side_effect = state
-    with pytest.raises(ConnectionError):
-        client.get_open_positions()
-
-
-@pytest.mark.parametrize("dex, coin", [("xyz", "xyz:XYZ100"), ("", "BTC")])
-def test_positions_of_one_dex_read_only_that_dex(dex, coin):
-    client = _hip3_client()
-    states = {
-        "": {"assetPositions": [{"position": {"coin": "BTC", "szi": "0.01", "entryPx": "1"}}]},
-        "xyz": {"assetPositions": [{"position": {"coin": "xyz:XYZ100", "szi": "0.002",
-                                                 "entryPx": "30000"}}]},
-    }
-    client._info.user_state.side_effect = lambda addr, dex="": states[dex]
-    assert list(client.get_open_positions(dex)) == [coin]
-    client._info.user_state.assert_called_once_with("0xTEST", dex=dex)
-
-
-def test_a_dex_that_is_down_does_not_stop_the_positions_of_another():
+def test_a_dex_that_is_down_does_not_stop_the_account_of_another():
     client = _hip3_client()
 
     def state(addr, dex=""):
@@ -317,9 +277,10 @@ def test_a_dex_that_is_down_does_not_stop_the_positions_of_another():
         return {"assetPositions": [{"position": {"coin": "BTC", "szi": "0.01", "entryPx": "1"}}]}
 
     client._info.user_state.side_effect = state
-    assert "BTC" in client.get_open_positions("")
+    client._info.spot_user_state.return_value = {"balances": []}
+    assert "BTC" in client.get_account("")["positions"]
     with pytest.raises(ConnectionError):
-        client.get_open_positions("xyz")
+        client.get_account("xyz")
 
 
 def test_lot_size_of_a_hip3_coin_comes_from_its_dex():
@@ -364,13 +325,6 @@ def test_an_unreadable_account_raises_rather_than_reads_as_empty():
         client.get_account("xyz")
 
 
-def test_account_value_of_a_hip3_dex_is_its_own_balance():
-    client = _hip3_client()
-    client._info.user_state.side_effect = lambda addr, dex="": {
-        "xyz": {"marginSummary": {"accountValue": "250.5"}}}[dex]
-    assert client.get_account_value(dex="xyz") == 250.5
-
-
 # ── stop-loss and leverage ─────────────────────────────────────────────────────
 
 def test_place_stop_order_is_a_reduce_only_stop_market_sell():
@@ -412,12 +366,14 @@ def test_set_leverage_accepts_ok():
     client.set_leverage("BTC", 3)
     client._exchange.update_leverage.assert_called_once_with(3, "BTC", is_cross=False)
 
+
 def test_a_position_carries_its_unrealised_pnl():
     # The grid sizes its orders from realised equity: account value minus this.
     client = _make_client()
     client._info.user_state.return_value = {"assetPositions": [
         {"position": {"coin": "BTC", "szi": "0.002", "entryPx": "83000", "unrealizedPnl": "-1.25"}}]}
-    assert client.get_open_positions(dex="")["BTC"]["unrealized_pnl"] == -1.25
+    client._info.spot_user_state.return_value = {"balances": []}
+    assert client.get_account("")["positions"]["BTC"]["unrealized_pnl"] == -1.25
 
 
 def _built(key_address: str, wallet_address: str | None, roles: dict[str, str] | None = None):

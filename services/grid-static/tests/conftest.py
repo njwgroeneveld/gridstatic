@@ -33,8 +33,8 @@ def connector():
     m.get_sz_decimals.return_value = 2
     # $550 realised equity at 100% over 11 lines is the $50 a line the tests use.
     m.get_account_value.return_value = 550.0
-    # get_account answers from the two mocks above, so a test sets the value and
-    # the positions apart, as before, and either can be made to fail.
+    # Test knobs, not connector methods: get_account answers from these two, so a
+    # test can set the value and the positions apart, and make either fail.
     async def account(dex=""):
         return await m.get_account_value(dex=dex), await m.get_positions(dex=dex)
 

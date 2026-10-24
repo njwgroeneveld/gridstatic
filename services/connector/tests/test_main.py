@@ -61,26 +61,6 @@ def test_order_status_route_answers_502_when_the_exchange_is_unreadable():
     assert r.status_code == 502
 
 
-def test_positions_route_answers_502_when_the_exchange_is_unreadable():
-    # An unreadable position must never look like "no position".
-    fake = MagicMock()
-    fake.get_open_positions.side_effect = ConnectionError("down")
-    with patch("src.main._ex", return_value=fake):
-        r = client.get("/positions")
-    assert r.status_code == 502
-
-
-@pytest.mark.parametrize("query, dex", [("", None), ("?dex=xyz", "xyz"), ("?dex=", "")])
-def test_positions_route_passes_the_dex_and_without_one_reads_every_dex(query, dex):
-    # No dex: every dex, as before -- what an older grid-static asks for.
-    # An empty dex is the default dex, not "every dex".
-    fake = MagicMock()
-    fake.get_open_positions.return_value = {}
-    with patch("src.main._ex", return_value=fake):
-        assert client.get("/positions" + query).status_code == 200
-    fake.get_open_positions.assert_called_once_with(dex)
-
-
 @pytest.mark.parametrize("path", ["/orders/tp", "/orders/sl", "/positions/BTC/close"])
 def test_routes_the_grid_never_used_are_gone(path):
     assert client.post(path, json={}).status_code in (404, 405)
@@ -97,15 +77,6 @@ def test_price_route_gives_the_mark_price():
 def test_price_route_answers_502_when_unreadable():
     with patch("src.main._info.get_mark_price", side_effect=ConnectionError("down")):
         assert client.get("/price/BTC").status_code == 502
-
-
-def test_account_value_route_takes_a_dex():
-    fake = MagicMock()
-    fake.get_account_value.return_value = 250.5
-    with patch("src.main._ex", return_value=fake):
-        r = client.get("/account/value", params={"dex": "xyz"})
-    assert r.json() == {"account_value": 250.5}
-    fake.get_account_value.assert_called_once_with(dex="xyz")
 
 
 def test_account_route_gives_value_and_positions_of_one_dex():

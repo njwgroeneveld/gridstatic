@@ -117,22 +117,12 @@ class ExchangeClient:
     def get_account(self, dex: str = "") -> dict:
         """The account value and the positions of one dex, from one read of its
         state: a grid needs both every round, and asking twice doubled the
-        heaviest request of the round."""
+        heaviest request of the round. Raises when the dex cannot be read: an
+        unreadable position is never a flat one."""
         state = self._info.user_state(self._wallet_address, dex=dex)
         return {"account_value": self._value_of(state, dex),
                 "positions": self._positions_of(state, dex)}
 
-    def get_account_value(self, dex: str = "") -> float:
-        return self._value_of(self._info.user_state(self._wallet_address, dex=dex), dex)
-
-    def get_open_positions(self, dex: str | None = None) -> dict[str, dict]:
-        """Positions under their full name: on one dex, or on every dex this client
-        knows when dex is None. Any dex that cannot be read raises: an unreadable
-        position is never a flat one."""
-        result = {}
-        for dex in (self._dexes if dex is None else [dex]):
-            result.update(self._positions_of(self._info.user_state(self._wallet_address, dex=dex), dex))
-        return result
 
     def get_open_orders(self, coin: str) -> list[dict]:
         """Raises when the exchange cannot be read. Swallowing that into an empty

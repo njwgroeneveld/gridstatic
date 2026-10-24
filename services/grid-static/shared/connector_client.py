@@ -21,23 +21,15 @@ class ConnectorClient:
     async def get_mids(self) -> dict[str, float]:
         return await self._get("/mids")
 
-    async def get_account_value(self, dex: str = "") -> float:
-        return float((await self._get("/account/value", dex=dex))["account_value"])
-
     async def get_account(self, dex: str = "") -> tuple[float, dict[str, dict]]:
-        """The account value and positions of one dex, from one read."""
+        """The account value and positions of one dex, from one read. "" is the
+        default dex, "xyz" a HIP-3 one."""
         a = await self._get("/account", dex=dex)
         return float(a["account_value"]), a["positions"]
 
     async def get_price(self, coin: str) -> float:
         """The mark price: on a thin book the mid moves with the grid's own orders."""
         return float((await self._get(f"/price/{coin}"))["mark_px"])
-
-    async def get_positions(self, dex: str | None = None) -> dict[str, dict]:
-        """dex None: every dex. "" is the default dex, "xyz" a HIP-3 one."""
-        if dex is None:
-            return await self._get("/positions")
-        return await self._get("/positions", dex=dex)
 
     async def get_open_orders(self, coin: str) -> list[dict]:
         return await self._get(f"/orders/{coin}")
