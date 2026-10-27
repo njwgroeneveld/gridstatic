@@ -78,7 +78,7 @@ cell number tells them apart. Every round the bot sorts the orders on its market
 | the cloid | whose it is | what the bot does |
 |---|---|---|
 | no gridstatic marker | someone else's: a manual order, another bot | leaves it alone. If it fills, the position no longer adds up and the grid holds ([below](#the-position-has-to-add-up)) |
-| the marker, another fingerprint | an earlier grid on this market, whose settings have since changed | cancels its buys and sells; what it bought makes the grid hold until it is closed |
+| the marker, another fingerprint | an earlier grid on this market, whose settings have since changed | leaves it alone, and holds until it is gone |
 | the marker, its own fingerprint | one of its own cells | manages it |
 
 So after a restart the bot reads the book and knows which cell each order is on, without a
@@ -119,7 +119,7 @@ reads "bought since the last sell fill": 0.0010, and a sell of 0.0010 goes out. 
 lot. A position of 0.0030 BTC, with sells of 0.0010 on cells 2 and 5 and 0.0010 unsold on cell 7,
 adds up. A position of 0.0034 leaves 0.0004 BTC that no cell accounts for (bought by hand, say),
 and the grid holds. A residual below zero holds too: the bot's sells and what its cells hold add
-up to more than the position. So do a short position, and last round's
+up to more than the position. So do orders of an earlier grid, a short position, and last round's
 orders being nowhere on the book or in the fills. Every reason, with what to do about it, is in
 [operations.md](operations.md#when-the-grid-holds).
 

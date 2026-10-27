@@ -127,8 +127,8 @@ def check_grid(key: str, c: dict, cfg: dict, url: str, address: str, lookback_h:
         tag = decode(o.get("cloid"))
         (foreign if tag is None else ours if tag.fingerprint == fp else earlier).append((o, tag))
     if earlier:
-        bad(f"{len(earlier)} order(s) from an earlier grid on {coin} -- the bot cancels them "
-            f"in its next round; if they stay, the cancel fails (see its log)")
+        bad(f"{len(earlier)} order(s) from an earlier grid on {coin} -- the bot holds until "
+            f"they are cancelled")
     else:
         good("no orders from an earlier grid")
     if foreign:

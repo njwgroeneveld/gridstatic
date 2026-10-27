@@ -219,46 +219,12 @@ def test_a_second_sell_on_a_cell_is_cancelled_keeping_the_newest():
     assert not sells(p)
 
 
-def _old_stop(sz, trigger):
-    return {**stop(sz, trigger), "cloid": encode(OLD_FP, 0, STOP)}
-
-
-def test_an_earlier_grids_orders_are_cancelled_and_its_position_holds():
-    # The settings changed while the old grid held coin: its sell goes, and what
-    # it bought belongs to no cell here -- hold until it is closed by hand.
+def test_orders_of_an_earlier_grid_put_the_grid_on_hold_untouched():
     old = order(3, SELL, 0.38, ts=2000, fp=OLD_FP)
     p = run(orders=resting_buys(0, 1, 2) + [old], position=0.38)
-    assert [c.oid for c in p.cancels] == [old["oid"]]
-    assert "earlier grid" in p.hold and "Close that position" in p.hold
-    assert buys(p) == {}
-
-
-def test_replacing_a_flat_grid_is_seamless():
-    # Only buys on the book, nothing bought: the old buys go and the new grid
-    # places its own in the same round.
-    old = [order(c, BUY, 0.40, fp=OLD_FP) for c in (0, 1)]
-    p = run(orders=old, position=0.0)
-    assert sorted(c.oid for c in p.cancels) == sorted(o["oid"] for o in old)
-    assert p.hold is None
-    assert set(buys(p)) == {0, 1, 2, 3, 4, 5}       # every cell below 155
-
-
-def test_an_earlier_grids_stop_stays_while_this_grid_has_no_stop_of_its_own():
-    p = run(orders=[_old_stop(0.38, 90)], position=0.38)
+    assert p.hold is not None
     assert p.cancels == []
-
-
-def test_an_earlier_grids_stop_goes_once_this_grid_places_its_own():
-    old = _old_stop(0.38, 90)
-    p = run(orders=[old], position=0.38, stop_loss=95)
-    assert [c.oid for c in p.cancels] == [old["oid"]]
-    assert stops(p)[0].sz == 0.38
-
-
-def test_an_earlier_grids_stop_goes_when_flat():
-    old = _old_stop(0.38, 90)
-    p = run(orders=[old], position=0.0)
-    assert [c.oid for c in p.cancels] == [old["oid"]]
+    assert buys(p) == {}
 
 
 def test_sells_exceeding_the_position_hold_without_new_orders():
