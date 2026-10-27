@@ -79,16 +79,38 @@ The script asks for your testnet key (hidden input) and an optional subaccount, 
    addresses; the key never leaves the cluster.
 4. offers to set up [Telegram alerts](#telegram-alerts-optional): checks your bot token, looks
    up your chat id and sends a test message
-5. writes `gridstatic-values.yaml` with a BTC grid on testnet
+5. writes `gridstatic-values.yaml` with two grids on testnet, a BTC grid and a Nasdaq-100
+   grid, **both switched off**
 6. installs the Helm chart
-7. **verifies the result**: all pods run, the bot started its grid, and its first rounds run
-   without errors, or tells you it is on hold, and why
+7. **verifies the result**: all pods run and the bot started; with a grid active, also that
+   its first rounds run without errors, or that it is on hold, and why
 
 You end with a single verdict: done, or what went wrong and where to look.
 
-> **Check the bounds.** The default grid runs from 75,000 to 83,000. Testnet prices drift from
-> mainnet; if the testnet price is outside that range, edit `gridstatic-values.yaml` and upgrade
-> (see [Changing a running grid](#changing-a-running-grid)).
+### Starting a grid
+
+**Nothing trades after the installation.** Both grids in `gridstatic-values.yaml` have
+`active: false`, so you decide which one starts, and when:
+
+1. **Check the bounds** against the current price on
+   [the testnet site](https://app.hyperliquid-testnet.xyz): `lower` below the price, `upper`
+   above it. Testnet prices drift from mainnet, so the defaults may not fit (BTC 75,000-83,000,
+   Nasdaq-100 29,000-32,000).
+2. **Nasdaq-100 only:** move USDC to the `xyz` dex first. It keeps a balance of its own; see
+   [HIP-3 markets](#stocks-and-indices-hip-3-markets).
+3. Set `active: true` on that grid.
+4. Upgrade:
+
+   ```bash
+   helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
+     -n gridstatic -f gridstatic-values.yaml
+   ```
+
+5. Follow the log: `kubectl -n gridstatic logs deploy/gridstatic-grid-static -f`. The grid logs
+   `started: ...`, then a `BUY` for every cell below the price.
+
+To stop a grid again, set `active: false` and upgrade. Its orders stay on the exchange; cancel
+them there, or use `helm uninstall`, which cancels them for you.
 
 | option | |
 |---|---|

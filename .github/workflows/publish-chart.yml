@@ -36,7 +36,7 @@ jobs:
           fi
           echo "$out" | grep -q "hyperliquid.existingSecret is empty"
 
-      - name: Refuse to render without an active grid
+      - name: Refuse to render without any grid
         run: |
           # No default grid on purpose: Helm merges maps, so a default would run
           # next to the user's own grids without them knowing.
@@ -44,7 +44,12 @@ jobs:
             echo "ERROR: the chart renders without any grid"
             exit 1
           fi
-          echo "$out" | grep -q "no active grid"
+          echo "$out" | grep -q "grid.coins is empty"
+
+      - name: Render with every grid switched off
+        run: |
+          # What install.sh writes: the stack runs, nothing trades until a grid is activated.
+          helm template t ./chart $KEY --set grid.coins.BTC-20.active=false > /dev/null
 
       - name: The HIP-3 dex reaches the connector
         run: |

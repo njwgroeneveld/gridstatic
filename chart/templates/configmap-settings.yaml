@@ -1,9 +1,7 @@
-{{- $active := 0 }}
-{{- range $key, $c := .Values.grid.coins }}
-{{- if $c.active }}{{ $active = add1 $active }}{{ end }}
-{{- end }}
-{{- if eq $active 0 }}
-{{- fail "grid.coins has no active grid. Add one to your values file -- chart/values.yaml has a commented example. The chart has no default grid on purpose: Helm merges maps, so a default would quietly run next to yours." }}
+{{- /* Grids that are all switched off are fine: the stack runs and trades nothing
+     until one is set to active. No grid at all is a values file never filled in. */ -}}
+{{- if not .Values.grid.coins }}
+{{- fail "grid.coins is empty. Add a grid to your values file -- chart/values.yaml has a commented example, and install.sh writes one for you. The chart has no default grid on purpose: Helm merges maps, so a default would quietly run next to yours." }}
 {{- end -}}
 apiVersion: v1
 kind: ConfigMap

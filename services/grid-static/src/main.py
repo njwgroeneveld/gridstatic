@@ -127,6 +127,9 @@ async def lifespan(_app: FastAPI):
     await _wait_for("connector", connector.get_mids)
     tasks = [asyncio.create_task(g.run_loop()) for g in _grids]
     log.info(f"Started {len(_grids)} grid(s)")
+    if not _grids:
+        log.warning("No active grid: nothing trades. Set active: true on a grid in your "
+                    "values file and run helm upgrade.")
     yield
 
     for t in tasks:

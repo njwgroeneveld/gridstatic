@@ -492,19 +492,34 @@ hyperliquid:
 
 ${TG_VALUES}
 grid:
+  # Both grids start switched off: nothing trades until you set active: true on
+  # one and run helm upgrade. Check its bounds against the current testnet price
+  # first -- lower below the price, upper above it.
+  #
   # Each grid uses allocationPct% of the realised equity on its dex, over its
   # lines, set every round. Hyperliquid refuses orders under \$10 (leverage counts).
   coins:
     BTC-20:
       coin: BTC
-      active: true
+      active: false
       allocationPct: 90
       upper: 83000
       lower: 75000
       numLines: 20
       leverage: 1
+    NASDAQ:
+      # The Nasdaq-100 on the HIP-3 dex xyz. That dex keeps a balance of its own:
+      # move USDC to it before you activate this grid (docs/operations.md, HIP-3).
+      coin: "xyz:XYZ100"
+      active: false
+      allocationPct: 90
+      upper: 32000
+      lower: 29000
+      numLines: 10
+      leverage: 5
+      stopLoss: 28000            # optional: sells everything below this; resumes on its own
 EOF
-    ok "written -- check the grid bounds against the current testnet price"
+    ok "written -- a BTC and a Nasdaq-100 grid, both switched off"
   fi
 fi
 
@@ -564,13 +579,24 @@ if [ -n "$restarts" ]; then
   say "       kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static --previous"
 fi
 
+# Grids switched off are a normal start: install.sh writes them that way. Then the
+# bot only has to come up; there is no grid to wait for.
+ACTIVE_GRIDS=0
+if grep -qE '^[[:space:]]*active:[[:space:]]*true' "$VALUES_FILE"; then ACTIVE_GRIDS=1; fi
+
 # The readiness probe makes the wait above meaningful, but the startup log line can
 # still trail it by a moment. Poll for it instead of looking once.
-say "  waiting for the bot to start its grid..."
+if [ "$ACTIVE_GRIDS" = 1 ]; then
+  say "  waiting for the bot to start its grid..."
+  started_re="\] started: "
+else
+  say "  waiting for the bot to start (no grid is active yet)..."
+  started_re="Started 0 grid"
+fi
 bot_log=""
 for _ in $(seq 1 30); do
   bot_log="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --tail=80 2>/dev/null || true)"
-  if printf '%s' "$bot_log" | grep -qE "\] started: |Refusing to start"; then
+  if printf '%s' "$bot_log" | grep -qE "$started_re|Refusing to start"; then
     break
   fi
   sleep 3
@@ -580,6 +606,8 @@ if printf '%s' "$bot_log" | grep -q "Refusing to start"; then
   err "the bot refuses this configuration:"
   printf '%s\n' "$bot_log" | sed -n '/Refusing to start/,$p' | head -6 | sed 's/^/       /'
   problems=1
+elif [ "$ACTIVE_GRIDS" = 0 ] && printf '%s' "$bot_log" | grep -q "Started 0 grid"; then
+  ok "the bot runs; no grid is active, so nothing trades yet"
 elif printf '%s' "$bot_log" | grep -q "\] started: "; then
   ok "$(printf '%s' "$bot_log" | grep -o '\] started: .*' | head -1 | sed 's/^\] //')"
 else
@@ -591,7 +619,7 @@ else
   problems=1
 fi
 
-if [ "$problems" = 0 ]; then
+if [ "$problems" = 0 ] && [ "$ACTIVE_GRIDS" = 1 ]; then
   say "  watching the first rounds (35 seconds)..."
   sleep 35
   recent="$(kubectl -n "$NAMESPACE" logs deploy/"$RELEASE"-grid-static --since=40s 2>/dev/null || true)"
@@ -610,7 +638,28 @@ if [ "$problems" = 0 ]; then
 fi
 
 # ── Verdict ──────────────────────────────────────────────────────────────────
-if [ "$problems" = 0 ]; then
+if [ "$problems" = 0 ] && [ "$ACTIVE_GRIDS" = 0 ]; then
+  step "${green}Done${reset} -- installed; no grid trades yet"
+  cat <<EOF
+
+  $VALUES_FILE has two grids, both switched off: BTC-20 and NASDAQ (Nasdaq-100).
+  To start one:
+
+    1. Check its bounds against the current testnet price on
+       https://app.hyperliquid-testnet.xyz -- lower must be below the price,
+       upper above it. Adjust them in $VALUES_FILE if not.
+    2. NASDAQ only: move USDC to the xyz dex first; it has a balance of its own.
+    3. Set  active: true  on that grid in $VALUES_FILE.
+    4. Run:
+         helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
+    5. Follow it:
+         kubectl -n $NAMESPACE logs deploy/$RELEASE-grid-static -f
+       It logs "started: ..." and then a BUY for every cell below the price.
+
+  Trading with real money: see 'Going to mainnet' in docs/operations.md. That step is
+  manual on purpose -- it is not something you want to do quickly.
+EOF
+elif [ "$problems" = 0 ]; then
   step "${green}Done${reset} -- your grid runs on testnet"
   cat <<EOF
 

@@ -131,9 +131,20 @@ bash install.sh
 ```
 
 It asks for your testnet key (hidden input), checks it with Hyperliquid before installing
-anything, optionally sets up Telegram, installs the chart and
-verifies that the first rounds run. Configuration, HIP-3 markets, the stop-loss, holds and the
-move to mainnet are in [`docs/operations.md`](docs/operations.md).
+anything, optionally sets up Telegram, installs the chart and verifies that the bot runs.
+
+**Nothing trades yet after that.** The values file it writes, `gridstatic-values.yaml`, holds two
+grids, BTC and the Nasdaq-100 (`xyz:XYZ100`), both with `active: false`, so you choose which one
+starts. To start one:
+
+1. check its bounds against the current testnet price (`lower` below it, `upper` above it);
+2. for the Nasdaq-100, move USDC to the `xyz` dex first: it keeps a balance of its own;
+3. set `active: true` on it and run
+   `helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic -n gridstatic -f gridstatic-values.yaml`.
+
+Details are in [Starting a grid](docs/operations.md#starting-a-grid). Configuration, HIP-3
+markets, the stop-loss, holds and the move to mainnet are in
+[`docs/operations.md`](docs/operations.md).
 
 ---
 

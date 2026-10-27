@@ -7,6 +7,13 @@ What it sees right now, cell by cell:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-grid-static 8080:8080
   curl -s localhost:8080/status
 
+{{- $active := 0 }}
+{{- range $key, $c := .Values.grid.coins }}{{ if $c.active }}{{ $active = add1 $active }}{{ end }}{{ end }}
+{{- if eq $active 0 }}
+
+No grid is active yet: nothing trades. To start one, set `active: true` on it in your
+values file -- check its bounds against the current price first -- and run helm upgrade.
+{{ end }}
 If the log says "Refusing to start", the configuration has a problem the bot will not
 trade with; the message names it.
 {{ if .Values.hyperliquid.testnet }}
