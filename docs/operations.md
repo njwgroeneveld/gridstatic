@@ -46,6 +46,10 @@ same coin, makes it hold. That is correct, because it can no longer tell what is
 | an API wallet for the account | the **API wallet's** key | the account's address |
 | an API wallet for a subaccount | the **API wallet's** key | the subaccount's address |
 
+The address is always the account that holds the money, never the API wallet's own address,
+even though Hyperliquid's API page shows that one most prominently. `install.sh` catches
+that mistake before it installs anything.
+
 **Prefer an API wallet.** Create one under *API* on Hyperliquid, approved by your main account. It
 can trade, but it cannot withdraw or move funds, so a leaked key cannot drain the account. At
 startup the connector asks the exchange (`userRole`) whether the key is an API wallet and whether
@@ -67,7 +71,12 @@ The script asks for your testnet key (hidden input) and an optional subaccount, 
 
 1. checks that `kubectl`, `helm` and your cluster are available
 2. creates the `gridstatic` namespace
-3. stores the key in a Kubernetes Secret
+3. stores the key in a Kubernetes Secret and **checks it with Hyperliquid testnet**: whether
+   the key is an API wallet or an account key, whether the address is an account it may
+   trade for, and whether that account holds USDC. If they do not fit together, it says why,
+   lists the accounts this key can trade on, and asks again. The check runs as a short-lived
+   pod from the connector image and asks only Hyperliquid's public info endpoint about
+   addresses; the key never leaves the cluster.
 4. offers to set up [Telegram alerts](#telegram-alerts-optional): checks your bot token, looks
    up your chat id and sends a test message
 5. writes `gridstatic-values.yaml` with a BTC grid on testnet

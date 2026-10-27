@@ -130,7 +130,8 @@ curl -fsSLO https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/in
 bash install.sh
 ```
 
-It asks for your testnet key (hidden input), optionally sets up Telegram, installs the chart and
+It asks for your testnet key (hidden input), checks it with Hyperliquid before installing
+anything, optionally sets up Telegram, installs the chart and
 verifies that the first rounds run. Configuration, HIP-3 markets, the stop-loss, holds and the
 move to mainnet are in [`docs/operations.md`](docs/operations.md).
 

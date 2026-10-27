@@ -53,8 +53,9 @@ Options
   --help             this text
 
 Environment variables (each one skips the matching question)
-  GRIDSTATIC_HL_KEY      private key of the testnet account (0x + 64 hex)
-  GRIDSTATIC_HL_WALLET   subaccount to trade on; empty = the key's own account
+  GRIDSTATIC_HL_KEY      private key: an API wallet's, or the account's own (0x + 64 hex)
+  GRIDSTATIC_HL_WALLET   account to trade on: the API wallet's account or a subaccount;
+                         empty = the key's own account
   GRIDSTATIC_TG_TOKEN    Telegram bot token; set it to include alerts
   GRIDSTATIC_TG_CHAT     Telegram chat id; looked up for you when empty
   GRIDSTATIC_NAMESPACE   same as --namespace
@@ -111,62 +112,8 @@ else
   ok "cluster reachable ($(kubectl config current-context))"
 fi
 
-# ── 2. Hyperliquid key ───────────────────────────────────────────────────────
-step "Your Hyperliquid testnet key"
-
-HL_KEY="${GRIDSTATIC_HL_KEY:-}"
-HL_WALLET="${GRIDSTATIC_HL_WALLET:-}"
-
-# Reinstalling is a normal case: helm uninstall only removes what Helm created, so
-# the Secret is usually still there. Then there is no need to paste the key again.
-REUSE_SECRET=0
-if [ -z "$HL_KEY" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 \
-   && kubectl -n "$NAMESPACE" get secret "$HL_SECRET" >/dev/null 2>&1; then
-  say "  A Secret $HL_SECRET already exists in namespace $NAMESPACE."
-  printf '  Use it? [Y/n]: '
-  read -r answer
-  case "$answer" in
-    n|N) : ;;
-    *)   REUSE_SECRET=1 ;;
-  esac
-fi
-
-if [ "$REUSE_SECRET" = 1 ]; then
-  ok "reusing the existing Secret -- no key needed"
-elif [ -z "$HL_KEY" ]; then
-  cat <<'EOF'
-  The bot trades on Hyperliquid TESTNET: test money, real exchange. Create a
-  testnet account at https://app.hyperliquid-testnet.xyz, claim test USDC from
-  its faucet, and export the account's private key.
-
-  Give the bot an account of its own -- a fresh one, or a subaccount. Every round
-  it checks that the position adds up to its own orders; a manual position or
-  another bot on the same coin puts the grid on hold.
-
-EOF
-  printf '  Private key (input stays hidden): '
-  read -rs HL_KEY
-  printf '\n'
-  printf '  Subaccount address to trade on (empty: the key'"'"'s own account): '
-  read -r HL_WALLET
-fi
-
-if [ "$REUSE_SECRET" = 0 ]; then
-  [ -n "$HL_KEY" ] || die "no key given"
-  case "$HL_KEY" in
-    0x*) : ;;
-    *)   HL_KEY="0x$HL_KEY" ;;
-  esac
-  if ! printf '%s' "$HL_KEY" | grep -qE '^0x[0-9a-fA-F]{64}$'; then
-    die "that does not look like a private key (expected 0x followed by 64 hex characters)"
-  fi
-  if [ -n "$HL_WALLET" ] && ! printf '%s' "$HL_WALLET" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
-    die "that does not look like an address (expected 0x followed by 40 hex characters)"
-  fi
-  ok "key received${HL_WALLET:+, trading on subaccount $HL_WALLET}"
-fi
-
-# ── 3. Namespace ─────────────────────────────────────────────────────────────
+# ── 2. Namespace ─────────────────────────────────────────────────────────────
+# Before the key: the key check below runs as a pod in this namespace.
 step "Namespace $NAMESPACE"
 
 if [ "$DRY_RUN" = 0 ] && kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
@@ -176,8 +123,59 @@ else
   if [ "$DRY_RUN" = 0 ]; then ok "created"; fi
 fi
 
-# ── 4. Secret ────────────────────────────────────────────────────────────────
-step "Secret $HL_SECRET"
+# ── 3. Hyperliquid key ───────────────────────────────────────────────────────
+step "Your Hyperliquid testnet key"
+
+HL_KEY="${GRIDSTATIC_HL_KEY:-}"
+HL_WALLET="${GRIDSTATIC_HL_WALLET:-}"
+
+explain_key() {
+  cat <<'EOF'
+  The bot trades on Hyperliquid TESTNET: test money, real exchange. You need an
+  account at https://app.hyperliquid-testnet.xyz with test USDC from its faucet.
+  Two questions follow: a private key, and the address of the account to trade on.
+
+  Recommended: an API wallet. Create one on the site's API page and approve it
+  with your account. It can trade, but it can never withdraw.
+    private key  ->  the API wallet's private key (shown once, when you create it)
+    address      ->  the account it trades for: your account, or a subaccount.
+                     NOT the API wallet's own address.
+
+  Or the account's own key. It works, but a leaked key could withdraw everything.
+    private key  ->  exported from your wallet app
+    address      ->  empty, or the address of one of its subaccounts
+
+  Give the bot an account of its own -- a fresh one, or a subaccount. Every round
+  it checks that the position adds up to its own orders; a manual position or
+  another bot on the same coin puts the grid on hold.
+
+EOF
+}
+
+ask_key() {
+  printf '  Private key (input stays hidden): '
+  read -rs HL_KEY
+  printf '\n'
+  printf '  Address of the account to trade on (empty: the key'"'"'s own account): '
+  read -r HL_WALLET
+}
+
+# Format only: whether the key and the address belong together is for check_key.
+key_format_ok() {
+  [ -n "$HL_KEY" ] || { err "no key given"; return 1; }
+  case "$HL_KEY" in
+    0x*) : ;;
+    *)   HL_KEY="0x$HL_KEY" ;;
+  esac
+  if ! printf '%s' "$HL_KEY" | grep -qE '^0x[0-9a-fA-F]{64}$'; then
+    err "that does not look like a private key (expected 0x followed by 64 hex characters)"
+    return 1
+  fi
+  if [ -n "$HL_WALLET" ] && ! printf '%s' "$HL_WALLET" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+    err "that does not look like an address (expected 0x followed by 40 hex characters)"
+    return 1
+  fi
+}
 
 create_secret() {
   # Through apply, so running again does not fail with "already exists".
@@ -195,14 +193,193 @@ create_secret() {
   printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\ndata:\n  private_key: %s\n  wallet_address: "%s"\n' \
     "$HL_SECRET" "$NAMESPACE" "$key_b64" "$wallet_b64" | kubectl apply -f - >/dev/null
 }
-if [ "$REUSE_SECRET" = 1 ]; then
-  ok "left unchanged"
-else
-  create_secret
-  if [ "$DRY_RUN" = 0 ]; then ok "created or updated"; fi
+# The key check. It runs in a short-lived pod from the connector's own image, which
+# has the library that turns a private key into its address, and reads the key from
+# the Secret -- exactly what the connector will read. It only asks Hyperliquid's
+# public info endpoint about addresses; the key itself never leaves the pod.
+# Output: one "kind<TAB>message" per line, and a last line "RESULT ok|wrong|unknown".
+read -r -d '' KEYCHECK_PY <<'PY' || true
+import json, os, urllib.request
+
+API = "https://api.hyperliquid-testnet.xyz/info"
+
+def say(kind, msg):
+    print(f"{kind}\t{msg}", flush=True)
+
+def info(body):
+    req = urllib.request.Request(API, json.dumps(body).encode(),
+                                 {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+def role(addr):
+    r = info({"type": "userRole", "user": addr})
+    return r.get("role"), (r.get("data") or {}).get("user", "").lower()
+
+def value(addr):
+    perp = float(info({"type": "clearinghouseState", "user": addr})["marginSummary"]["accountValue"])
+    spot = info({"type": "spotClearinghouseState", "user": addr})["balances"]
+    return perp + sum(float(b["total"]) for b in spot if b["coin"] == "USDC")
+
+def subaccounts(main):
+    return {s["subAccountUser"].lower(): s for s in (info({"type": "subAccounts", "user": main}) or [])}
+
+def show_accounts(main):
+    say("hint", "Accounts you can trade on with this key:")
+    say("hint", f"  {main}  {'your account':<26} ${value(main):,.2f}")
+    for addr, s in subaccounts(main).items():
+        v = float(s["clearinghouseState"]["marginSummary"]["accountValue"])
+        say("hint", f"  {addr}  {'subaccount ' + s['name']:<26} ${v:,.2f}")
+
+def wrong(msg, main=None):
+    say("error", msg)
+    if main:
+        show_accounts(main)
+    print("RESULT wrong")
+    raise SystemExit
+
+def main():
+    from eth_account import Account
+    signer = Account.from_key(os.environ["HL_PRIVATE_KEY"].strip()).address.lower()
+    wallet = os.environ.get("WALLET_ADDRESS", "").strip().lower()
+    srole, owner = role(signer)
+
+    if srole == "missing":
+        wrong(f"Hyperliquid testnet does not know this key (it belongs to {signer}). "
+              "An API wallet made on mainnet does not exist on testnet, and an account "
+              "only exists once it has received test USDC.")
+    if wallet == signer:
+        wrong("That address is the key's own address: leave the address empty for that.")
+
+    if srole == "agent":
+        if not wallet:
+            wrong("This is the key of an API wallet. Give the address of the account it "
+                  "trades for as well.", owner)
+        if wallet == owner:
+            account, what = owner, "an API wallet, trading for your account"
+        elif wallet in subaccounts(owner):
+            account, what = wallet, "an API wallet, trading for a subaccount"
+        elif role(wallet)[0] == "agent":
+            wrong(f"{wallet} is the address of an API wallet, not of an account. Give the "
+                  "address of the account it trades for.", owner)
+        else:
+            wrong(f"This API wallet belongs to {owner}, and {wallet} is not that account "
+                  "or one of its subaccounts.", owner)
+    elif srole == "user":
+        if not wallet:
+            account, what = signer, "the account's own key"
+        elif wallet in subaccounts(signer):
+            account, what = wallet, "the account's own key, trading for a subaccount"
+        elif role(wallet)[0] == "agent":
+            wrong(f"{wallet} is the address of an API wallet, not of an account.", signer)
+        else:
+            wrong(f"{wallet} is not a subaccount of this key's account.", signer)
+    else:
+        wrong(f"Hyperliquid reports this key as {srole!r}; expected an account or an API wallet.")
+
+    say("ok", f"key checked with Hyperliquid testnet: {what}")
+    if srole == "user":
+        say("warn", "this key can withdraw funds; an API wallet cannot (docs/operations.md, 'Which key')")
+    usd = value(account)
+    if usd > 0:
+        say("ok", f"${usd:,.2f} on {account}")
+    else:
+        say("warn", f"no USDC on {account} yet -- the bot cannot place orders without margin")
+    print("RESULT ok")
+
+try:
+    main()
+except SystemExit:
+    pass
+except Exception as e:
+    say("warn", f"could not check the key: {type(e).__name__}: {e}")
+    print("RESULT unknown")
+PY
+
+CHECK_IMAGE="${GRIDSTATIC_CHECK_IMAGE:-ghcr.io/njwgroeneveld/gridstatic-connector:latest}"
+CHECK_POD="$RELEASE-keycheck"
+
+# Sets CHECK_RESULT to ok, wrong or unknown. Never fails the install on its own: a
+# check that cannot run (no image, no network) is a warning, not a verdict.
+check_key() {
+  local overrides out kind msg
+  say "  checking the key with Hyperliquid testnet (the first time pulls an image)..."
+  overrides="$(printf '{"spec":{"containers":[{"name":"%s","image":"%s","stdin":true,"stdinOnce":true,"command":["python","-"],"env":[{"name":"HL_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"%s","key":"private_key"}}},{"name":"WALLET_ADDRESS","valueFrom":{"secretKeyRef":{"name":"%s","key":"wallet_address"}}}]}]}}' \
+    "$CHECK_POD" "$CHECK_IMAGE" "$HL_SECRET" "$HL_SECRET")"
+  kubectl -n "$NAMESPACE" delete pod "$CHECK_POD" --ignore-not-found >/dev/null 2>&1 || true
+  out="$(kubectl -n "$NAMESPACE" run "$CHECK_POD" --rm -i --quiet --restart=Never \
+           --image="$CHECK_IMAGE" --pod-running-timeout=3m --overrides="$overrides" \
+           <<<"$KEYCHECK_PY" 2>&1)" || true
+  CHECK_RESULT="$(printf '%s\n' "$out" | sed -n 's/^RESULT \([a-z]*\)$/\1/p' | tail -1)"
+  if [ -z "$CHECK_RESULT" ]; then
+    CHECK_RESULT=unknown
+    warn "could not run the key check -- continuing; the verification at the end still runs"
+    printf '%s\n' "$out" | tail -3 | sed 's/^/       /'
+    return
+  fi
+  while IFS=$'\t' read -r kind msg; do
+    case "$kind" in
+      ok)    ok "$msg" ;;
+      warn)  warn "$msg" ;;
+      error) err "$msg" ;;
+      hint)  say "       $msg" ;;
+    esac
+  done <<<"$out"
+}
+
+# Reinstalling is a normal case: helm uninstall only removes what Helm created, so
+# the Secret is usually still there. Then there is no need to paste the key again.
+REUSE_SECRET=0
+if [ -z "$HL_KEY" ] && [ "$DRY_RUN" = 0 ] && command -v kubectl >/dev/null 2>&1 \
+   && kubectl -n "$NAMESPACE" get secret "$HL_SECRET" >/dev/null 2>&1; then
+  say "  A Secret $HL_SECRET already exists in namespace $NAMESPACE."
+  printf '  Use it? [Y/n]: '
+  read -r answer
+  case "$answer" in
+    n|N) : ;;
+    *)   REUSE_SECRET=1 ;;
+  esac
 fi
 
-# ── 5. Telegram (optional) ───────────────────────────────────────────────────
+if [ "$REUSE_SECRET" = 0 ] && [ -z "$HL_KEY" ]; then
+  explain_key
+  ask_key
+fi
+
+HL_CHANGED=0
+TG_CHANGED=0
+
+# Ask again on a wrong answer, as long as someone is there to answer: a key from the
+# environment, without a terminal, fails at once.
+attempt=1
+while :; do
+  if [ "$REUSE_SECRET" = 0 ]; then
+    if ! key_format_ok; then
+      [ -t 0 ] && [ "$attempt" -lt 3 ] || die "no usable key"
+      attempt=$((attempt + 1)); ask_key; continue
+    fi
+    create_secret
+    if [ "$DRY_RUN" = 0 ]; then ok "Secret $HL_SECRET created or updated"; HL_CHANGED=1; fi
+  else
+    ok "reusing the existing Secret $HL_SECRET"
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    say "       would check the key with Hyperliquid testnet"
+    break
+  fi
+  check_key
+  [ "$CHECK_RESULT" = wrong ] || break
+
+  [ -t 0 ] && [ "$attempt" -lt 3 ] || die "the key and the address do not work together -- see above"
+  attempt=$((attempt + 1))
+  REUSE_SECRET=0
+  say ""
+  say "  Try again (attempt $attempt of 3)."
+  ask_key
+done
+
+# ── 4. Telegram (optional) ───────────────────────────────────────────────────
 step "Telegram alerts (optional)"
 
 TG_TOKEN="${GRIDSTATIC_TG_TOKEN:-}"
@@ -274,6 +451,7 @@ if [ "$TG_ENABLED" = 1 ] && [ "$TG_REUSE" = 0 ]; then
       "$TG_SECRET" "$NAMESPACE" "$(printf '%s' "$TG_TOKEN" | base64 | tr -d '\n')" \
       "$(printf '%s' "$TG_CHAT" | base64 | tr -d '\n')" | kubectl apply -f - >/dev/null
     ok "Secret $TG_SECRET created or updated"
+    TG_CHANGED=1
   fi
 fi
 unset TG_TOKEN
@@ -283,7 +461,7 @@ if [ "$TG_ENABLED" = 1 ]; then
   TG_VALUES=$'telegram:\n  enabled: true\n  existingSecret: '"$TG_SECRET"$'\n'
 fi
 
-# ── 6. Values file ───────────────────────────────────────────────────────────
+# ── 5. Values file ───────────────────────────────────────────────────────────
 step "Values file $VALUES_FILE"
 
 if [ -f "$VALUES_FILE" ]; then
@@ -328,12 +506,22 @@ EOF
   fi
 fi
 
-# ── 7. Install ───────────────────────────────────────────────────────────────
+# ── 6. Install ───────────────────────────────────────────────────────────────
 step "Deploying the chart"
 
 if [ "$DRY_RUN" = 0 ] && helm status "$RELEASE" -n "$NAMESPACE" >/dev/null 2>&1; then
   say "  release $RELEASE already exists -- upgrading"
   run helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
+  # A pod reads its Secret only when it starts, and helm upgrade restarts only pods
+  # whose template changed. A new key would otherwise wait for the next restart.
+  if [ "$HL_CHANGED" = 1 ]; then
+    run kubectl -n "$NAMESPACE" rollout restart deployment/"$RELEASE"-connector >/dev/null
+    ok "connector restarted to pick up the new key"
+  fi
+  if [ "$TG_CHANGED" = 1 ] && kubectl -n "$NAMESPACE" get deployment "$RELEASE"-alerter >/dev/null 2>&1; then
+    run kubectl -n "$NAMESPACE" rollout restart deployment/"$RELEASE"-alerter >/dev/null
+    ok "alerter restarted to pick up the new bot token"
+  fi
 else
   run helm install "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES_FILE"
 fi
@@ -345,7 +533,7 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 ok "deployed"
 
-# ── 8. Verify ────────────────────────────────────────────────────────────────
+# ── 7. Verify ────────────────────────────────────────────────────────────────
 step "Checking that it works"
 
 say "  waiting for the pods to become ready..."
