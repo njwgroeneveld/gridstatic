@@ -438,7 +438,9 @@ It needs `kubectl` access to the namespace (or `--settings settings.yaml`) and P
 Not part of the installation; nothing here is needed to run a grid. grid-static and the connector
 serve Prometheus metrics on `:8080/metrics/`. For a cluster with kube-prometheus-stack,
 [`monitoring/`](../monitoring/README.md) holds the scrape targets, two alert rules with their
-runbooks, and a Grafana dashboard, to apply with `kubectl`.
+runbooks, and a Grafana dashboard. They are applied separately from `install.sh`, with `kubectl`
+from a checkout of this repository; the steps, including how to check that your stack picks them
+up, are in [Applying it](../monitoring/README.md#applying-it).
 
 ---
 

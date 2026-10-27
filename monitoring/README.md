@@ -75,19 +75,81 @@ Only request types made in the time range are shown; the start-up ones disappear
 
 ## Applying it
 
-The files are written for the default install (release `gridstatic` in namespace `gridstatic`)
-and for a kube-prometheus-stack that selects on `release: monitoring`. With other names, change
-the `namespace` and `release` lines first.
+Monitoring is a separate step: `install.sh` does not touch it, and the bot runs the same
+without it. You need a cluster with
+[kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
+(Prometheus Operator, Prometheus, Alertmanager and Grafana with its dashboard sidecar), and
+gridstatic installed.
+
+**1. Get the files.** The commands below read them from a checkout of this repository. If you
+installed with only `install.sh`, clone it first:
+
+```bash
+git clone https://github.com/njwgroeneveld/gridstatic.git
+cd gridstatic
+```
+
+In an existing clone, `git pull` brings in the latest version.
+
+**2. Check that your stack will pick them up.** The files are written for the default install
+(release `gridstatic` in namespace `gridstatic`) and for a kube-prometheus-stack installed as
+release `monitoring`. Nothing fails if that does not match: Prometheus just ignores them. So
+check it:
+
+```bash
+# Which ServiceMonitors and rules Prometheus selects.
+kubectl get prometheus -A -o jsonpath='{range .items[*]}{.metadata.name}: serviceMonitorSelector={.spec.serviceMonitorSelector} ruleSelector={.spec.ruleSelector}{"\n"}{end}'
+
+# Which namespaces Grafana's sidecar searches for dashboards.
+kubectl get deploy -A -l app.kubernetes.io/name=grafana -o jsonpath='{..env[?(@.name=="NAMESPACE")].value}'; echo
+```
+
+| you see | what it means |
+|---|---|
+| `{"matchLabels":{"release":"monitoring"}}` or `{}` | fits: `{}` selects everything |
+| another `release` value | change `release: monitoring` in `servicemonitors.yaml` and `alerts.yaml` to it |
+| sidecar `ALL`, or a list with `gridstatic` | the dashboard will be found |
+| anything else for the sidecar | set `grafana.sidecar.dashboards.searchNamespace: ALL` in your stack's values, or import the dashboard by hand (step 3) |
+
+Installed gridstatic under another release or namespace? Then change the `namespace` lines
+and the `job` names in both files too.
+
+**3. Apply.** Safe to run again, and the way to update after a `git pull`:
 
 ```bash
 kubectl apply -f monitoring/servicemonitors.yaml -f monitoring/alerts.yaml
 
-# The dashboard, for Grafana's sidecar (kube-prometheus-stack looks for this label). The key is
-# the file name the sidecar writes, shared with every other dashboard: keep it distinct.
+# The dashboard, for Grafana's sidecar. The key is the file name the sidecar writes, shared
+# with every other dashboard: keep it distinct.
 kubectl -n gridstatic create configmap gridstatic-dashboard \
-  --from-file=gridstatic.json=monitoring/dashboard.json
-kubectl -n gridstatic label configmap gridstatic-dashboard grafana_dashboard=1
-# ... or import monitoring/dashboard.json by hand: Dashboards → New → Import.
+  --from-file=gridstatic.json=monitoring/dashboard.json \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n gridstatic label configmap gridstatic-dashboard grafana_dashboard=1 --overwrite
+```
+
+Without the sidecar, import `monitoring/dashboard.json` by hand instead: in Grafana,
+*Dashboards → New → Import*.
+
+**4. Check that it works.**
+
+- Prometheus scrapes both services within a minute. Open it (the service name differs per
+  install: `kubectl -n monitoring get svc | grep prometheus`):
+
+  ```bash
+  kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090
+  ```
+
+  On http://localhost:9090, *Status → Targets* shows `gridstatic-grid-static` and
+  `gridstatic-connector` as *UP*, and *Alerts* lists `GridstaticDown` and `GridstaticHold`.
+- Grafana shows the dashboard **gridstatic** within a minute. With no grid active yet, the grid
+  panels stay mostly empty; the exchange and health panels fill straight away.
+
+**Removing it.** These objects are not part of the Helm release: `helm uninstall` leaves them,
+and deleting the namespace removes them (after that, apply them again). To remove them yourself:
+
+```bash
+kubectl delete -f monitoring/servicemonitors.yaml -f monitoring/alerts.yaml
+kubectl -n gridstatic delete configmap gridstatic-dashboard
 ```
 
 ## Metrics
