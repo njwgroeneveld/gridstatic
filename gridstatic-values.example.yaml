@@ -23,15 +23,23 @@ grid:
   #
   # The key (BTC-20, NASDAQ) is a free-form label for logs and alerts. One grid per
   # coin. Changing coin, lower, upper, numLines or leverage makes a new grid.
+  #
+  # allocationPct adds up per dex, not across all grids. Every dex has a balance
+  # of its own: BTC trades on the default dex, NASDAQ on the xyz dex, so 90 + 90
+  # is two times 90% of two different balances. Grids on the same dex share its
+  # balance, and their allocationPct may add up to at most 100.
+  #
+  # Leverage is always isolated: each grid's position has its own margin, and a
+  # loss on one cannot eat into the margin of another.
   coins:
     BTC-20:
       coin: BTC                  # the market as Hyperliquid names it
       active: false
-      allocationPct: 90          # share of the realised equity on its dex
+      allocationPct: 90          # share of the realised equity on the default dex
       lower: 75000               # lowest buy line
       upper: 83000               # highest sell line
       numLines: 20               # lines from lower to upper; one cell between each pair
-      leverage: 1
+      leverage: 1                # isolated
       # stopLoss: 72000          # optional: sells everything below this; resumes on its own
       # maxEquityUsd: 500        # optional: size from at most this much equity
     NASDAQ:
@@ -43,7 +51,7 @@ grid:
       lower: 29000
       upper: 32000
       numLines: 10
-      leverage: 5
+      leverage: 5                # isolated
       stopLoss: 28000
 
   # Order size per line, every round: allocationPct% of (account value - unrealised

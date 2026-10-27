@@ -209,7 +209,7 @@ grid:
       lower: 93
       upper: 107
       numLines: 20
-      leverage: 1
+      leverage: 1                 # always isolated margin
       stopLoss: 88                # optional: sell everything below this; must lie below lower
 ```
 
@@ -230,6 +230,15 @@ round sizes from it. **Every USDC on a dex counts as grid capital**: on the defa
 spot USDC too, so do not keep money for something else on the same wallet. Grids on the
 same dex share it: their `allocationPct` may add up to at most
 100; keep it near 90 to leave room for fees and funding.
+
+**`allocationPct` adds up per dex, not across all grids.** A BTC grid at 90 and a Nasdaq-100
+grid at 90, as in the example values, use 90% of two different balances: the default dex's
+and the `xyz` dex's. Two grids on the default dex, say BTC and SOL, share one balance and may
+use at most 100 together; the bot refuses to start otherwise and names the dex.
+
+**Leverage is always isolated.** The connector sets every grid's leverage as isolated margin,
+never cross: each position has margin of its own, and a loss on one grid cannot pull the
+margin from under another.
 
 **A ceiling, if you want one.** `maxEquityUsd` caps the equity a grid sizes from: with $612 on
 the dex, a cap of 500, 90% and 10 lines, the size is $45 a line instead of $55. Money above it
@@ -308,9 +317,13 @@ The chart passes the dex on to the connector; nothing else to configure. Three t
 from a regular market:
 
 - **Each HIP-3 dex keeps its own balance.** USDC on your regular perps account does not margin
-  an `xyz` position. Move USDC to that dex first: a `sendAsset` transfer to it, or enable dex
-  abstraction so the account shares collateral across dexes. The startup margin check reads the
+  an `xyz` position. Transfer USDC to that dex first. The startup margin check reads the
   balance of the coin's own dex and warns if it is short.
+
+  Hyperliquid also offers *dex abstraction*, which lets dexes share one pool of collateral.
+  Avoid it for gridstatic: the bot assumes each dex has a balance of its own, so with a shared
+  pool a BTC grid at 90 and a Nasdaq-100 grid at 90 would both size from the same money. If you
+  use it anyway, keep the `allocationPct` of all grids together at or below 100.
 - **Check the market on the network you use.** A market can be busy on mainnet and nearly empty
   on testnet. On testnet a grid there mostly tests the plumbing: with no one trading, its orders
   rarely fill.
