@@ -197,3 +197,30 @@ def test_max_equity_usd_must_be_a_positive_number(cap):
 def test_max_equity_usd_is_optional():
     grids, _ = m._validate(_cfg({"BTC-20": _grid(max_equity_usd=500)}))
     assert grids[0][1]["max_equity_usd"] == 500
+
+
+def test_stop_route_stops_every_grid(monkeypatch):
+    from fastapi.testclient import TestClient
+    grid = MagicMock()
+    grid.shutdown = AsyncMock(return_value={"coin": "BTC", "cancelled": 3, "failed": []})
+    monkeypatch.setattr(m, "_grids", [grid])
+    r = TestClient(m.app).post("/stop")
+    assert r.status_code == 200
+    assert r.json()["stopped"] is True
+    grid.shutdown.assert_awaited_once()
+
+
+def test_stop_route_fails_when_a_grid_could_not_cancel_everything(monkeypatch):
+    # The pre-delete hook fails on a 500, and with it helm uninstall: orders that
+    # stayed behind must not go unnoticed.
+    from fastapi.testclient import TestClient
+    ok = MagicMock()
+    ok.shutdown = AsyncMock(return_value={"coin": "BTC", "cancelled": 3, "failed": []})
+    unreadable = MagicMock(coin_key="NDX", coin="xyz:XYZ100")
+    unreadable.shutdown = AsyncMock(side_effect=RuntimeError("timeout"))
+    monkeypatch.setattr(m, "_grids", [ok, unreadable])
+    r = TestClient(m.app).post("/stop")
+    assert r.status_code == 500
+    assert r.json()["stopped"] is False
+    assert "timeout" in r.json()["grids"][1]["error"]
+    ok.shutdown.assert_awaited_once()            # the other grid still stopped

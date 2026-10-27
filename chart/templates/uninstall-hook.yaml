@@ -1,0 +1,31 @@
+{{- if .Values.uninstall.cancelOrders }}
+# helm uninstall: before anything is removed, stop the grids and cancel their buys
+# and sells. grid-static does the work (POST /stop): it knows which orders are its
+# own, and stopping its rounds first keeps it from placing them again. The stop-loss
+# stays while there is a position. If a cancel fails the Job fails, and with it the
+# uninstall -- orders left behind should not go unnoticed. A failed Job is kept for
+# its log; `helm uninstall --no-hooks` skips all of this.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-cancel-orders
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 240
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector: {{ toYaml .Values.scheduling.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.scheduling.tolerations | nindent 8 }}
+      containers:
+        - name: cancel-orders
+          # The connector image, for its curl: no extra image to pull or trust.
+          image: "{{ .Values.images.connector.repository }}:{{ .Values.images.connector.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["curl", "-sS", "--fail-with-body", "--max-time", "120", "-w", "\n",
+                    "-X", "POST", "http://{{ .Release.Name }}-grid-static:8080/stop"]
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+{{- end }}

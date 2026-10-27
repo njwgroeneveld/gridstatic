@@ -639,7 +639,7 @@ else
 
   On testnet, starting over is safe:
     helm uninstall $RELEASE -n $NAMESPACE
-  Orders the bot placed stay on the exchange until you cancel them there.
+  That cancels the grid's orders too; a stop-loss stays while there is a position.
 EOF
   exit 1
 fi

@@ -755,3 +755,90 @@ async def test_grid_counters_exist_at_zero_before_the_first_event(config, connec
         assert REGISTRY.get_sample_value("grid_orders_placed_total",
                                          {"coin": "ZERO", "side": side}) == 0.0
     assert REGISTRY.get_sample_value("grid_trades_closed_total", {"coin": "ZERO"}) == 0.0
+
+
+# ── stopping for good (helm uninstall) ────────────────────────────────────────
+
+def _cancelled(connector):
+    return sorted(c.args[1] for c in connector.cancel_order.call_args_list)
+
+
+async def test_shutdown_cancels_buys_and_sells_and_keeps_the_stop_while_holding(grid, connector):
+    await grid.start()
+    connector.get_open_orders.return_value = [
+        _book_order(grid, 1, BUY, 0.45, oid=11),
+        _book_order(grid, 3, SELL, 0.38, oid=13),
+        _book_order(grid, 0, STOP, 0.38, oid=14),
+        {"coin": "BTC", "oid": 15, "cloid": None, "side": "B", "limitPx": "90", "sz": "1"},
+    ]
+    connector.get_positions.return_value = {"BTC": {"szi": 0.38, "unrealized_pnl": 0.0}}
+    r = await grid.shutdown()
+    assert _cancelled(connector) == [11, 13]     # not the stop, not the order without our tag
+    assert r["cancelled"] == 2 and r["kept_stop"] and r["failed"] == []
+
+
+async def test_shutdown_cancels_the_stop_too_when_flat(grid, connector):
+    await grid.start()
+    connector.get_open_orders.return_value = [_book_order(grid, 1, BUY, 0.45, oid=11),
+                                              _book_order(grid, 0, STOP, 0.38, oid=14)]
+    r = await grid.shutdown()
+    assert _cancelled(connector) == [11, 14]
+    assert not r["kept_stop"]
+
+
+async def test_shutdown_also_cancels_an_earlier_grids_orders(grid, connector):
+    await grid.start()
+    old = _book_order(grid, 2, BUY, 0.40, oid=21)
+    old["cloid"] = encode(b"\x01\x02\x03\x04\x05\x06", 2, BUY)
+    connector.get_open_orders.return_value = [old]
+    await grid.shutdown()
+    assert _cancelled(connector) == [21]
+
+
+async def test_shutdown_reports_a_failed_cancel_and_still_cancels_the_rest(grid, connector, alerter):
+    await grid.start()
+    connector.get_open_orders.return_value = [_book_order(grid, 1, BUY, 0.45, oid=11),
+                                              _book_order(grid, 2, BUY, 0.42, oid=12)]
+
+    async def cancel(coin, oid):
+        if oid == 11:
+            raise RuntimeError("exchange says no")
+        return {"status": "ok"}
+
+    connector.cancel_order.side_effect = cancel
+    r = await grid.shutdown()
+    assert r["cancelled"] == 1
+    assert len(r["failed"]) == 1 and "exchange says no" in r["failed"][0]
+    assert "FAILED" in alerter.send_alert.call_args.args[1]["message"]
+
+
+async def test_shutdown_raises_when_the_book_cannot_be_read(grid, connector):
+    await grid.start()
+    connector.get_open_orders.side_effect = RuntimeError("timeout")
+    with pytest.raises(RuntimeError):
+        await grid.shutdown()
+    connector.cancel_order.assert_not_awaited()
+
+
+async def test_shutdown_waits_for_a_round_in_flight(grid, connector):
+    await grid.start()
+    connector.get_open_orders.return_value = [_book_order(grid, 1, BUY, 0.45, oid=11)]
+    await grid._busy.acquire()                   # a round is busy placing orders
+    task = asyncio.create_task(grid.shutdown())
+    await asyncio.sleep(0.01)
+    connector.cancel_order.assert_not_awaited()
+    grid._busy.release()
+    await asyncio.wait_for(task, 1)
+    assert _cancelled(connector) == [11]
+
+
+async def test_no_round_runs_after_shutdown(grid, connector):
+    grid.interval = 0.01
+    loop = asyncio.create_task(grid.run_loop())
+    await asyncio.sleep(0.05)
+    await grid.shutdown()
+    rounds = connector.get_price.await_count
+    await asyncio.wait_for(loop, 1)              # the loop ends by itself
+    await asyncio.sleep(0.05)
+    assert connector.get_price.await_count == rounds
+    assert grid.status()["stopped"] is True

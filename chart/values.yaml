@@ -74,6 +74,14 @@ grid:
   #     leverage: 1
   coins: {}
 
+uninstall:
+  # true: helm uninstall first stops the grids and cancels their buys and sells on
+  # the exchange. The stop-loss stays while there is a position, which then stays
+  # protected; close it yourself. If a cancel fails, the uninstall stops and says
+  # so (`kubectl logs job/<release>-cancel-orders`); `helm uninstall --no-hooks`
+  # removes the stack without cancelling anything.
+  cancelOrders: true
+
 scheduling:
   # Empty: the scheduler picks a node. The images are built for amd64 and arm64.
   nodeSelector: {}

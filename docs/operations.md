@@ -472,12 +472,18 @@ helm uninstall gridstatic -n gridstatic
 kubectl delete namespace gridstatic
 ```
 
-Uninstalling stops the bot, nothing else: its orders, its position and its stop-loss stay on the
-exchange, and the stop keeps protecting the position.
+Before Helm removes anything, a short Job asks grid-static to stop for good: it finishes the
+round it is in, runs no more, and cancels every buy and sell it placed on the coins it trades.
+Orders without its tag, placed by hand or by another bot, stay. The output ends with what was
+cancelled per grid, and a Telegram message says the same.
 
-- **To stop for good,** cancel the orders and close the position on Hyperliquid yourself.
-- **To come back later,** leave everything as it is. Installing again with the same grid settings
-  picks the grid up where it was, because its orders still carry its fingerprint. Buys that filled
-  while it was gone get their sells in the first round, unless they are older than
-  `fillLookbackHours`; those make the grid hold.
-
+- **The stop-loss stays while there is a position**, so what the grid holds remains protected.
+  Close the position on Hyperliquid yourself; the stop goes with it. Without a position the stop
+  is cancelled too.
+- **If a cancel fails**, the uninstall stops and nothing is removed. The grids are already
+  stopped and place nothing new. Run `kubectl -n gridstatic logs job/gridstatic-cancel-orders`
+  to see what failed, then run `helm uninstall` again. To remove the stack without cancelling
+  anything, use `helm uninstall --no-hooks`.
+- **Only `helm uninstall` cancels.** A restart, an upgrade, a node that goes down or
+  `kubectl delete namespace` on its own leaves the orders where they are; the next start picks
+  them up. To keep the orders on an uninstall, set `uninstall.cancelOrders: false`.

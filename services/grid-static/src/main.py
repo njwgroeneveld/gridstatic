@@ -6,11 +6,12 @@ from contextlib import asynccontextmanager
 
 import yaml
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
 from shared.connector_client import ConnectorClient
 from shared.alerter_client import AlerterClient
-from src.strategy import StaticGrid, dex_of
+from src.strategy import StaticGrid, describe, dex_of
 
 log = logging.getLogger("grid-static")
 _grids: list[StaticGrid] = []
@@ -154,3 +155,20 @@ def health() -> dict:
 def status() -> dict:
     """What each grid saw in its last round. Reads nothing from the exchange."""
     return {"grids": [g.status() for g in _grids]}
+
+
+@app.post("/stop")
+async def stop() -> JSONResponse:
+    """Stop every grid for good and cancel its orders; helm uninstall calls this
+    from a pre-delete hook. 500 when a grid could not read its book or a cancel
+    failed: the uninstall then stops too, instead of leaving orders behind
+    unnoticed. Calling it again retries what is left."""
+    results, ok = [], True
+    for g in _grids:
+        try:
+            r = await g.shutdown()
+        except Exception as e:
+            r = {"coin_key": g.coin_key, "coin": g.coin, "error": describe(e)}
+        ok = ok and not (r.get("error") or r.get("failed"))
+        results.append(r)
+    return JSONResponse({"stopped": ok, "grids": results}, status_code=200 if ok else 500)

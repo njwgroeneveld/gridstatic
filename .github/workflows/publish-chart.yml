@@ -62,6 +62,11 @@ jobs:
             exit 1
           fi
 
+      - name: helm uninstall cancels the grid's orders by default
+        run: |
+          helm template t ./chart $KEY --show-only templates/uninstall-hook.yaml \
+            | grep -q '"helm.sh/hook": pre-delete'
+
       - name: The chart creates no Secrets of its own
         run: |
           if helm template t ./chart $KEY | grep -q "^kind: Secret"; then

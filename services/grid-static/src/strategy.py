@@ -92,6 +92,10 @@ class StaticGrid:
         self.last_position: float | None = None
         self.realized_24h = 0.0
         self._stopped_out = False     # announced once, cleared by the first buy after it
+        # Set by shutdown(): no round runs after it. The lock keeps shutdown from
+        # cancelling while a round is still placing orders.
+        self.stopped = False
+        self._busy = asyncio.Lock()
         # A labelled counter exists only once touched. Without these, gain - loss
         # in PromQL is empty for as long as the grid has made no loss.
         for counter in (metrics.grid_realized_gain_usd, metrics.grid_realized_loss_usd,
@@ -504,10 +508,52 @@ class StaticGrid:
             else:
                 self._edge.clear(side)
 
+    # ── Stopping for good ─────────────────────────────────────────────────────
+
+    async def shutdown(self) -> dict:
+        """Stop for good and take the grid's orders off the book -- what helm
+        uninstall runs. It waits for a round in flight, so no order goes out
+        after it. Buys and sells go; the stop stays while there is a position,
+        which then remains protected. Every gridstatic order on the coin goes,
+        an earlier grid's too; orders without our tag stay.
+
+        Raises when the book or the position cannot be read: an uninstall that
+        cannot tell what it leaves behind should not go ahead."""
+        self.stopped = True
+        async with self._busy:
+            orders = await self.connector.get_open_orders(self.coin)
+            _, positions = await self.connector.get_account(dex=dex_of(self.coin))
+            position = float((positions.get(self.coin) or {}).get("szi", 0.0))
+            flat = (position == 0 if self.sz_decimals is None
+                    else abs(position) <= 10 ** -self.sz_decimals / 2)
+            cancelled, kept_stop, failed = 0, False, []
+            for o in orders:
+                tag = decode(o.get("cloid"))
+                if tag is None:
+                    continue    # not ours: a manual order or another bot
+                if tag.side == STOP and not flat:
+                    kept_stop = True
+                    continue
+                try:
+                    await self.connector.cancel_order(self.coin, int(o["oid"]))
+                    cancelled += 1
+                except Exception as e:
+                    failed.append(f"{tag.side} {o['oid']}: {describe(e)}")
+
+        msg = f"{self.coin_key} stopped for uninstall: {cancelled} order(s) cancelled"
+        if kept_stop:
+            msg += f", stop-loss kept for the position of {position:g}"
+        if failed:
+            msg += f"; {len(failed)} cancel(s) FAILED: " + "; ".join(failed)
+        (log.error if failed else log.warning)(f"[{self.coin_key}] {msg}")
+        await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
+        return {"coin_key": self.coin_key, "coin": self.coin, "cancelled": cancelled,
+                "kept_stop": kept_stop, "position": position, "failed": failed}
+
     # ── The loop and /status ──────────────────────────────────────────────────
 
     async def run_loop(self) -> None:
-        while True:
+        while not self.stopped:
             try:
                 await self.start()
                 break
@@ -517,9 +563,12 @@ class StaticGrid:
                 await self._notice(f"{self.coin_key} cannot start and keeps retrying: {describe(e)}",
                                    key="start")
                 await asyncio.sleep(self.interval)
-        while True:
+        while not self.stopped:
             try:
-                await self.run_round()
+                async with self._busy:
+                    if self.stopped:
+                        break
+                    await self.run_round()
             except Exception as e:
                 log.exception(f"[{self.coin_key}] round failed: {describe(e)}")
                 metrics.grid_errors_total.labels(type="round").inc()
@@ -542,6 +591,7 @@ class StaticGrid:
             "price": self.last_price,
             "position": self.last_position,
             "hold": self._hold,
+            "stopped": self.stopped,
             "residual": p.residual if p else None,
             "realized_24h": self.realized_24h,
             "last_round_ms": self.last_round_ms,
