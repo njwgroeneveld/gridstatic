@@ -143,7 +143,14 @@ stays out of git; a `git pull` updates the example, never your settings. To star
 3. set `active: true` on it and run
    `helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic -n gridstatic -f gridstatic-values.yaml`.
 
-Details are in [Starting a grid](docs/operations.md#starting-a-grid). Configuration, HIP-3
+**Changing a grid?** Cancel its orders on Hyperliquid first. A grid whose `coin`, bounds, lines
+or leverage changed holds until the old grid's orders are gone. Switching a grid off with
+`active: false` leaves its orders on the exchange too. `helm uninstall` cancels the grids' orders
+for you; a stop-loss stays while there is a position.
+
+Details are in [Starting a grid](docs/operations.md#starting-a-grid),
+[Changing a running grid](docs/operations.md#changing-a-running-grid) and
+[Uninstalling](docs/operations.md#uninstalling). Configuration, HIP-3
 markets, the stop-loss, holds and the move to mainnet are in
 [`docs/operations.md`](docs/operations.md).
 
