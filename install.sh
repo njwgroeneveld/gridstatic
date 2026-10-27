@@ -355,7 +355,7 @@ attempt=1
 while :; do
   if [ "$REUSE_SECRET" = 0 ]; then
     if ! key_format_ok; then
-      [ -t 0 ] && [ "$attempt" -lt 3 ] || die "no usable key"
+      if [ ! -t 0 ] || [ "$attempt" -ge 3 ]; then die "no usable key"; fi
       attempt=$((attempt + 1)); ask_key; continue
     fi
     create_secret
@@ -371,7 +371,9 @@ while :; do
   check_key
   [ "$CHECK_RESULT" = wrong ] || break
 
-  [ -t 0 ] && [ "$attempt" -lt 3 ] || die "the key and the address do not work together -- see above"
+  if [ ! -t 0 ] || [ "$attempt" -ge 3 ]; then
+    die "the key and the address do not work together -- see above"
+  fi
   attempt=$((attempt + 1))
   REUSE_SECRET=0
   say ""
