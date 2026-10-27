@@ -1,0 +1,51 @@
+# Example values for gridstatic. install.sh copies this to gridstatic-values.yaml,
+# your own copy, which git ignores: a git pull updates this example, never your
+# settings. Every setting, with what it does: chart/values.yaml.
+#
+# There is no key in here: it lives in a Kubernetes Secret, and this file names it.
+
+hyperliquid:
+  # true: every order goes to testnet. See 'Going to mainnet' in docs/operations.md
+  # before you change this.
+  testnet: true
+  # The Secret with `private_key` and `wallet_address`; install.sh creates it.
+  existingSecret: gridstatic-hyperliquid
+
+telegram:
+  # Alerts and /status. install.sh sets this to true when you set Telegram up.
+  enabled: false
+  existingSecret: gridstatic-telegram
+
+grid:
+  # Both grids are switched off: nothing trades until you set active: true on one
+  # and run helm upgrade. Check its bounds against the current testnet price first
+  # -- lower below the price, upper above it. docs/operations.md, 'Starting a grid'.
+  #
+  # The key (BTC-20, NASDAQ) is a free-form label for logs and alerts. One grid per
+  # coin. Changing coin, lower, upper, numLines or leverage makes a new grid.
+  coins:
+    BTC-20:
+      coin: BTC                  # the market as Hyperliquid names it
+      active: false
+      allocationPct: 90          # share of the realised equity on its dex
+      lower: 75000               # lowest buy line
+      upper: 83000               # highest sell line
+      numLines: 20               # lines from lower to upper; one cell between each pair
+      leverage: 1
+      # stopLoss: 72000          # optional: sells everything below this; resumes on its own
+      # maxEquityUsd: 500        # optional: size from at most this much equity
+    NASDAQ:
+      # The Nasdaq-100 on the HIP-3 dex xyz. That dex keeps a balance of its own:
+      # move USDC to it before you activate this grid.
+      coin: "xyz:XYZ100"         # HIP-3 market: "dex:NAME", quoted
+      active: false
+      allocationPct: 90          # of the xyz dex's equity, not the default dex's
+      lower: 29000
+      upper: 32000
+      numLines: 10
+      leverage: 5
+      stopLoss: 28000
+
+  # Order size per line, every round: allocationPct% of (account value - unrealised
+  # P&L) on the grid's dex, over its lines. Hyperliquid refuses orders under $10,
+  # leverage included.

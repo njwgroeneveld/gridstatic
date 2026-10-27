@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - '*.sh'
+      - 'gridstatic-values.example.yaml'
       - '.github/workflows/scripts.yml'
   workflow_dispatch:
 

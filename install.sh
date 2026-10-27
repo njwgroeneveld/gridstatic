@@ -458,68 +458,59 @@ if [ "$TG_ENABLED" = 1 ] && [ "$TG_REUSE" = 0 ]; then
 fi
 unset TG_TOKEN
 
-TG_VALUES=""
-if [ "$TG_ENABLED" = 1 ]; then
-  TG_VALUES=$'telegram:\n  enabled: true\n  existingSecret: '"$TG_SECRET"$'\n'
-fi
-
 # ── 5. Values file ───────────────────────────────────────────────────────────
 step "Values file $VALUES_FILE"
 
+# Your values file starts as a copy of gridstatic-values.example.yaml: from the
+# checkout this script runs in, or else from GitHub. One source, so the example in
+# the repo and what the installer writes cannot drift apart.
+EXAMPLE="gridstatic-values.example.yaml"
+EXAMPLE_URL="${GRIDSTATIC_EXAMPLE_URL:-https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/$EXAMPLE}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Telegram on in the values file: flip `enabled` in its block, or add the block.
+enable_telegram() {
+  if ! grep -q '^telegram:' "$VALUES_FILE"; then
+    printf '\ntelegram:\n  enabled: true\n  existingSecret: %s\n' "$TG_SECRET" >> "$VALUES_FILE"
+    return
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  awk -v secret="$TG_SECRET" '
+    /^telegram:/                  { block = 1; print; next }
+    block && /^[^[:space:]#]/     { block = 0 }
+    block && /^  enabled:/        { print "  enabled: true"; next }
+    block && /^  existingSecret:/ { print "  existingSecret: " secret; next }
+                                  { print }' "$VALUES_FILE" > "$tmp"
+  cat "$tmp" > "$VALUES_FILE"
+  rm -f "$tmp"
+}
+
 if [ -f "$VALUES_FILE" ]; then
-  if [ "$TG_ENABLED" = 1 ] && ! grep -q '^telegram:' "$VALUES_FILE"; then
+  if [ "$TG_ENABLED" = 1 ] && ! grep -A3 '^telegram:' "$VALUES_FILE" | grep -q 'enabled: true'; then
     if [ "$DRY_RUN" = 1 ]; then
-      printf '       would add the telegram block to %s\n' "$VALUES_FILE"
+      printf '       would switch Telegram on in %s\n' "$VALUES_FILE"
     else
-      printf '\n%s' "$TG_VALUES" >> "$VALUES_FILE"
-      ok "already exists -- telegram block added"
+      enable_telegram
+      ok "already exists -- Telegram switched on in it"
     fi
   else
-    ok "already exists -- left unchanged"
+    ok "already exists -- left unchanged: it holds your settings"
+    say "       the current example grids are in $EXAMPLE in the repo; to start from"
+    say "       them, delete $VALUES_FILE and run this script again"
   fi
 else
   if [ "$DRY_RUN" = 1 ]; then
-    printf '       would write: %s\n' "$VALUES_FILE"
+    printf '       would write: %s (from %s)\n' "$VALUES_FILE" "$EXAMPLE"
   else
-    cat > "$VALUES_FILE" <<EOF
-# Created by install.sh. There is no key in here: it lives in the Secret
-# $HL_SECRET. You can keep this file and put it under version control.
-hyperliquid:
-  # true: every order goes to testnet. See 'Going to mainnet' in docs/operations.md
-  # before you change this.
-  testnet: true
-  existingSecret: $HL_SECRET
-
-${TG_VALUES}
-grid:
-  # Both grids start switched off: nothing trades until you set active: true on
-  # one and run helm upgrade. Check its bounds against the current testnet price
-  # first -- lower below the price, upper above it.
-  #
-  # Each grid uses allocationPct% of the realised equity on its dex, over its
-  # lines, set every round. Hyperliquid refuses orders under \$10 (leverage counts).
-  coins:
-    BTC-20:
-      coin: BTC
-      active: false
-      allocationPct: 90
-      upper: 83000
-      lower: 75000
-      numLines: 20
-      leverage: 1
-    NASDAQ:
-      # The Nasdaq-100 on the HIP-3 dex xyz. That dex keeps a balance of its own:
-      # move USDC to it before you activate this grid (docs/operations.md, HIP-3).
-      coin: "xyz:XYZ100"
-      active: false
-      allocationPct: 90
-      upper: 32000
-      lower: 29000
-      numLines: 10
-      leverage: 5
-      stopLoss: 28000            # optional: sells everything below this; resumes on its own
-EOF
-    ok "written -- a BTC and a Nasdaq-100 grid, both switched off"
+    if [ -f "$SCRIPT_DIR/$EXAMPLE" ]; then
+      cp "$SCRIPT_DIR/$EXAMPLE" "$VALUES_FILE"
+    elif ! curl -fsSL --max-time 20 "$EXAMPLE_URL" -o "$VALUES_FILE"; then
+      rm -f "$VALUES_FILE"
+      die "could not download $EXAMPLE from $EXAMPLE_URL"
+    fi
+    if [ "$TG_ENABLED" = 1 ]; then enable_telegram; fi
+    ok "written from $EXAMPLE -- its grids are switched off"
   fi
 fi
 
@@ -642,13 +633,13 @@ if [ "$problems" = 0 ] && [ "$ACTIVE_GRIDS" = 0 ]; then
   step "${green}Done${reset} -- installed; no grid trades yet"
   cat <<EOF
 
-  $VALUES_FILE has two grids, both switched off: BTC-20 and NASDAQ (Nasdaq-100).
-  To start one:
+  No grid in $VALUES_FILE is active yet. To start one:
 
     1. Check its bounds against the current testnet price on
        https://app.hyperliquid-testnet.xyz -- lower must be below the price,
        upper above it. Adjust them in $VALUES_FILE if not.
-    2. NASDAQ only: move USDC to the xyz dex first; it has a balance of its own.
+    2. A HIP-3 grid such as NASDAQ (xyz:XYZ100): move USDC to its dex first;
+       each HIP-3 dex keeps a balance of its own.
     3. Set  active: true  on that grid in $VALUES_FILE.
     4. Run:
          helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE

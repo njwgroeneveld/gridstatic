@@ -79,8 +79,10 @@ The script asks for your testnet key (hidden input) and an optional subaccount, 
    addresses; the key never leaves the cluster.
 4. offers to set up [Telegram alerts](#telegram-alerts-optional): checks your bot token, looks
    up your chat id and sends a test message
-5. writes `gridstatic-values.yaml` with two grids on testnet, a BTC grid and a Nasdaq-100
-   grid, **both switched off**
+5. writes `gridstatic-values.yaml`, a copy of
+   [`gridstatic-values.example.yaml`](../gridstatic-values.example.yaml): two grids on testnet,
+   BTC and Nasdaq-100, **both switched off**. An existing values file is left alone: it holds
+   your settings
 6. installs the Helm chart
 7. **verifies the result**: all pods run and the bot started; with a grid active, also that
    its first rounds run without errors, or that it is on hold, and why
@@ -160,24 +162,15 @@ This looks more roundabout than `kubectl create secret --from-literal=...`, on p
 `--from-literal` the key lands in your shell history and in the process list. Here it is read
 with hidden input, handed to `base64` over a pipe, and sent to `kubectl` over stdin.
 
-**3. Values**: create `gridstatic-values.yaml`:
+**3. Values**: start from the example in the repo:
 
-```yaml
-hyperliquid:
-  testnet: true
-  existingSecret: gridstatic-hyperliquid
-
-grid:
-  coins:
-    BTC-20:
-      coin: BTC
-      active: true
-      allocationPct: 90
-      upper: 83000
-      lower: 75000
-      numLines: 20
-      leverage: 1
+```bash
+curl -fsSLo gridstatic-values.yaml   https://raw.githubusercontent.com/njwgroeneveld/gridstatic/master/gridstatic-values.example.yaml
 ```
+
+Both its grids are switched off. Check the BTC grid's bounds against the current testnet price
+and set `active: true` on it, or leave both off and start one later
+([Starting a grid](#starting-a-grid)).
 
 **4. Install**
 

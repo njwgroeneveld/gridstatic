@@ -133,9 +133,10 @@ bash install.sh
 It asks for your testnet key (hidden input), checks it with Hyperliquid before installing
 anything, optionally sets up Telegram, installs the chart and verifies that the bot runs.
 
-**Nothing trades yet after that.** The values file it writes, `gridstatic-values.yaml`, holds two
-grids, BTC and the Nasdaq-100 (`xyz:XYZ100`), both with `active: false`, so you choose which one
-starts. To start one:
+**Nothing trades yet after that.** The values file it writes, `gridstatic-values.yaml`, is a copy
+of [`gridstatic-values.example.yaml`](gridstatic-values.example.yaml): two grids, BTC and the
+Nasdaq-100 (`xyz:XYZ100`), both with `active: false`, so you choose which one starts. Your copy
+stays out of git; a `git pull` updates the example, never your settings. To start a grid:
 
 1. check its bounds against the current testnet price (`lower` below it, `upper` above it);
 2. for the Nasdaq-100, move USDC to the `xyz` dex first: it keeps a balance of its own;
@@ -163,6 +164,7 @@ services/connector/         the only service that talks to Hyperliquid
 services/telegram-alerter/  alerts and the /status command
 chart/                      Helm chart
 install.sh                  one-command installer
+gridstatic-values.example.yaml   the grids install.sh starts you with, switched off
 tools/gridcheck.py          independent check of a grid against the exchange
 monitoring/                 optional: Grafana dashboard, alert rules, scrape targets
 docs/                       design.md (why), operations.md (how)

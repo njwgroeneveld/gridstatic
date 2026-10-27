@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - 'chart/**'
+      - 'gridstatic-values.example.yaml'
       - '.github/workflows/publish-chart.yml'
   workflow_dispatch:
 
@@ -46,10 +47,14 @@ jobs:
           fi
           echo "$out" | grep -q "grid.coins is empty"
 
-      - name: Render with every grid switched off
+      - name: The example values render, every grid switched off
         run: |
           # What install.sh writes: the stack runs, nothing trades until a grid is activated.
-          helm template t ./chart $KEY --set grid.coins.BTC-20.active=false > /dev/null
+          helm template t ./chart -f gridstatic-values.example.yaml > /tmp/out.yaml
+          if grep -q "active: true" /tmp/out.yaml; then
+            echo "ERROR: the example values switch a grid on"
+            exit 1
+          fi
 
       - name: The HIP-3 dex reaches the connector
         run: |
