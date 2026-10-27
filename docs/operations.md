@@ -80,8 +80,8 @@ The script asks for your testnet key (hidden input) and an optional subaccount, 
 4. offers to set up [Telegram alerts](#telegram-alerts-optional): checks your bot token, looks
    up your chat id and sends a test message
 5. writes `gridstatic-values.yaml`, a copy of
-   [`gridstatic-values.example.yaml`](../gridstatic-values.example.yaml): two grids on testnet,
-   BTC and Nasdaq-100, **both switched off**. An existing values file is left alone: it holds
+   [`gridstatic-values.example.yaml`](../gridstatic-values.example.yaml): three grids on
+   testnet, BTC, SOL and Nasdaq-100, **all switched off**. An existing values file is left alone: it holds
    your settings
 6. installs the Helm chart
 7. **verifies the result**: all pods run and the bot started; with a grid active, also that
@@ -91,24 +91,27 @@ You end with a single verdict: done, or what went wrong and where to look.
 
 ### Starting a grid
 
-**Nothing trades after the installation.** Both grids in `gridstatic-values.yaml` have
+**Nothing trades after the installation.** Every grid in `gridstatic-values.yaml` has
 `active: false`, so you decide which one starts, and when:
 
 1. **Check the bounds** against the current price on
    [the testnet site](https://app.hyperliquid-testnet.xyz): `lower` below the price, `upper`
    above it. Testnet prices drift from mainnet, so the defaults may not fit (BTC 75,000-83,000,
-   Nasdaq-100 29,000-32,000).
+   SOL 93-107, Nasdaq-100 29,000-32,000).
 2. **Nasdaq-100 only:** move USDC to the `xyz` dex first. It keeps a balance of its own; see
    [HIP-3 markets](#stocks-and-indices-hip-3-markets).
-3. Set `active: true` on that grid.
-4. Upgrade:
+3. **BTC and SOL together:** both trade on the default dex and share its balance, so their
+   `allocationPct` may add up to at most 100. The example has BTC at 90 and SOL at 45: lower
+   BTC to 45 before you switch both on.
+4. Set `active: true` on that grid.
+5. Upgrade:
 
    ```bash
    helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
      -n gridstatic -f gridstatic-values.yaml
    ```
 
-5. Follow the log: `kubectl -n gridstatic logs deploy/gridstatic-grid-static -f`. The grid logs
+6. Follow the log: `kubectl -n gridstatic logs deploy/gridstatic-grid-static -f`. The grid logs
    `started: ...`, then a `BUY` for every cell below the price.
 
 To stop a grid again, set `active: false` and upgrade. Its orders stay on the exchange; cancel

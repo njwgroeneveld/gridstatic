@@ -134,8 +134,8 @@ It asks for your testnet key (hidden input), checks it with Hyperliquid before i
 anything, optionally sets up Telegram, installs the chart and verifies that the bot runs.
 
 **Nothing trades yet after that.** The values file it writes, `gridstatic-values.yaml`, is a copy
-of [`gridstatic-values.example.yaml`](gridstatic-values.example.yaml): two grids, BTC and the
-Nasdaq-100 (`xyz:XYZ100`), both with `active: false`, so you choose which one starts. Your copy
+of [`gridstatic-values.example.yaml`](gridstatic-values.example.yaml): three grids, BTC, SOL and
+the Nasdaq-100 (`xyz:XYZ100`), all with `active: false`, so you choose which one starts. Your copy
 stays out of git; a `git pull` updates the example, never your settings. To start a grid:
 
 1. check its bounds against the current testnet price (`lower` below it, `upper` above it);

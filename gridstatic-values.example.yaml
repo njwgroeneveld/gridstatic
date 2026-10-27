@@ -17,17 +17,18 @@ telegram:
   existingSecret: gridstatic-telegram
 
 grid:
-  # Both grids are switched off: nothing trades until you set active: true on one
+  # Every grid is switched off: nothing trades until you set active: true on one
   # and run helm upgrade. Check its bounds against the current testnet price first
   # -- lower below the price, upper above it. docs/operations.md, 'Starting a grid'.
   #
-  # The key (BTC-20, NASDAQ) is a free-form label for logs and alerts. One grid per
+  # The key (BTC-20, SOL-10, NASDAQ) is a free-form label for logs and alerts. One grid per
   # coin. Changing coin, lower, upper, numLines or leverage makes a new grid.
   #
   # allocationPct adds up per dex, not across all grids. Every dex has a balance
   # of its own: BTC trades on the default dex, NASDAQ on the xyz dex, so 90 + 90
   # is two times 90% of two different balances. Grids on the same dex share its
-  # balance, and their allocationPct may add up to at most 100.
+  # balance, and their allocationPct may add up to at most 100: BTC-20 and SOL-10
+  # both trade on the default dex.
   #
   # Leverage is always isolated: each grid's position has its own margin, and a
   # loss on one cannot eat into the margin of another.
@@ -42,6 +43,17 @@ grid:
       leverage: 1                # isolated
       # stopLoss: 72000          # optional: sells everything below this; resumes on its own
       # maxEquityUsd: 500        # optional: size from at most this much equity
+    SOL-10:
+      # On the default dex, like BTC-20: the two share one balance. Switched on
+      # together, their allocationPct may add up to at most 100 -- lower BTC-20 to
+      # 45 as well, or the bot refuses to start and says why.
+      coin: SOL
+      active: false
+      allocationPct: 45          # of the default dex's equity, shared with BTC-20
+      lower: 93
+      upper: 107
+      numLines: 10
+      leverage: 1                # isolated
     NASDAQ:
       # The Nasdaq-100 on the HIP-3 dex xyz. That dex keeps a balance of its own:
       # move USDC to it before you activate this grid.

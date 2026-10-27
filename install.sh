@@ -639,7 +639,9 @@ if [ "$problems" = 0 ] && [ "$ACTIVE_GRIDS" = 0 ]; then
        https://app.hyperliquid-testnet.xyz -- lower must be below the price,
        upper above it. Adjust them in $VALUES_FILE if not.
     2. A HIP-3 grid such as NASDAQ (xyz:XYZ100): move USDC to its dex first;
-       each HIP-3 dex keeps a balance of its own.
+       each HIP-3 dex keeps a balance of its own. Grids on one dex share its
+       balance (BTC-20 and SOL-10 both use the default dex): their allocationPct
+       may add up to at most 100.
     3. Set  active: true  on that grid in $VALUES_FILE.
     4. Run:
          helm upgrade $RELEASE $CHART -n $NAMESPACE -f $VALUES_FILE
