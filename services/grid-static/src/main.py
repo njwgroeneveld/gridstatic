@@ -11,10 +11,15 @@ from prometheus_client import make_asgi_app
 
 from shared.connector_client import ConnectorClient
 from shared.alerter_client import AlerterClient
-from src.strategy import StaticGrid, describe, dex_of
+from src.strategy import StaticGrid, cancel_own_orders, describe, dex_of, stop_message
 
 log = logging.getLogger("grid-static")
 _grids: list[StaticGrid] = []
+# Grids in the settings with active: false, as (label, coin). They run no rounds,
+# but their orders may still rest on the exchange -- placed before they were
+# switched off -- so /stop cancels those too.
+_switched_off: list[tuple[str, str]] = []
+_clients: dict = {}
 
 
 class ConfigError(ValueError):
@@ -114,6 +119,9 @@ async def lifespan(_app: FastAPI):
 
     connector = ConnectorClient(cfg["connector_url"])
     alerter = AlerterClient(cfg["alerter_url"])
+    _clients.update(connector=connector, alerter=alerter)
+    _switched_off[:] = [(key, c["coin"]) for key, c in (cfg.get("coins") or {}).items()
+                        if not c.get("active") and c.get("coin")]
     for msg in skipped:
         log.error(msg)
         await alerter.send_alert("error", {"coin": msg.split(":")[0], "message": msg})
@@ -163,15 +171,34 @@ def status() -> dict:
 @app.post("/stop")
 async def stop() -> JSONResponse:
     """Stop every grid for good and cancel its orders; helm uninstall calls this
-    from a pre-delete hook. 500 when a grid could not read its book or a cancel
-    failed: the uninstall then stops too, instead of leaving orders behind
-    unnoticed. Calling it again retries what is left."""
+    from a pre-delete hook. Switched-off grids too: their orders may still rest
+    on the exchange. 500 when a book could not be read or a cancel failed: the
+    uninstall then stops too, instead of leaving orders behind unnoticed.
+    Calling it again retries what is left."""
     results, ok = [], True
     for g in _grids:
         try:
             r = await g.shutdown()
         except Exception as e:
             r = {"coin_key": g.coin_key, "coin": g.coin, "error": describe(e)}
+        ok = ok and not (r.get("error") or r.get("failed"))
+        results.append(r)
+
+    # A running grid already cleared its coin; one coin is handled once.
+    done = {g.coin for g in _grids}
+    for key, coin in _switched_off:
+        if coin in done:
+            continue
+        done.add(coin)
+        label = f"{key} (switched off)"
+        try:
+            r = {"coin_key": key, "coin": coin, "switched_off": True,
+                 **await cancel_own_orders(_clients["connector"], coin)}
+            msg = stop_message(label, r)
+            (log.error if r["failed"] else log.warning)(f"[{key}] {msg}")
+            await _clients["alerter"].send_alert("error", {"coin": coin, "message": msg})
+        except Exception as e:
+            r = {"coin_key": key, "coin": coin, "switched_off": True, "error": describe(e)}
         ok = ok and not (r.get("error") or r.get("failed"))
         results.append(r)
     return JSONResponse({"stopped": ok, "grids": results}, status_code=200 if ok else 500)

@@ -114,8 +114,9 @@ You end with a single verdict: done, or what went wrong and where to look.
 6. Follow the log: `kubectl -n gridstatic logs deploy/gridstatic-grid-static -f`. The grid logs
    `started: ...`, then a `BUY` for every cell below the price.
 
-To stop a grid again, set `active: false` and upgrade. Its orders stay on the exchange; cancel
-them there, or use `helm uninstall`, which cancels them for you.
+To stop a grid again, set `active: false` and upgrade. It then places nothing new, but its
+orders stay on the exchange: cancel them there, or let `helm uninstall` cancel them later. As
+long as the grid stays in your values file, switched off, the uninstall finds its coin.
 
 | option | |
 |---|---|
@@ -504,7 +505,8 @@ kubectl delete namespace gridstatic
 ```
 
 Before Helm removes anything, a short Job asks grid-static to stop for good: it finishes the
-round it is in, runs no more, and cancels every buy and sell it placed on the coins it trades.
+round it is in, runs no more, and cancels every buy and sell it placed on the coins in your
+values file, those of grids with `active: false` included.
 Orders without its tag, placed by hand or by another bot, stay. The output ends with what was
 cancelled per grid, and a Telegram message says the same.
 

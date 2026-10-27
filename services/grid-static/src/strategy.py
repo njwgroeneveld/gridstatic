@@ -45,6 +45,45 @@ def dex_of(coin: str) -> str:
     return coin.split(":", 1)[0] if ":" in coin else ""
 
 
+async def cancel_own_orders(connector, coin: str, sz_decimals: int | None = None) -> dict:
+    """Take gridstatic's orders on one coin off the book -- what helm uninstall runs,
+    for a running grid and for one that is switched off alike. Buys and sells go;
+    the stop stays while there is a position, which then remains protected. Every
+    gridstatic order on the coin goes, an earlier grid's too; orders without our
+    tag stay. Without the lot size (a grid that never started) only an exactly
+    flat position counts as flat: keeping a stop over dust is the safe side.
+
+    Raises when the book or the position cannot be read: an uninstall that cannot
+    tell what it leaves behind should not go ahead."""
+    orders = await connector.get_open_orders(coin)
+    _, positions = await connector.get_account(dex=dex_of(coin))
+    position = float((positions.get(coin) or {}).get("szi", 0.0))
+    flat = position == 0 if sz_decimals is None else abs(position) <= 10 ** -sz_decimals / 2
+    cancelled, kept_stop, failed = 0, False, []
+    for o in orders:
+        tag = decode(o.get("cloid"))
+        if tag is None:
+            continue    # not ours: a manual order or another bot
+        if tag.side == STOP and not flat:
+            kept_stop = True
+            continue
+        try:
+            await connector.cancel_order(coin, int(o["oid"]))
+            cancelled += 1
+        except Exception as e:
+            failed.append(f"{tag.side} {o['oid']}: {describe(e)}")
+    return {"cancelled": cancelled, "kept_stop": kept_stop, "position": position, "failed": failed}
+
+
+def stop_message(label: str, r: dict) -> str:
+    msg = f"{label} stopped for uninstall: {r['cancelled']} order(s) cancelled"
+    if r["kept_stop"]:
+        msg += f", stop-loss kept for the position of {r['position']:g}"
+    if r["failed"]:
+        msg += f"; {len(r['failed'])} cancel(s) FAILED: " + "; ".join(r["failed"])
+    return msg
+
+
 class StaticGrid:
     def __init__(self, coin_key: str, config: dict, connector, alerter, *,
                  interval: float = 30, lookback_hours: float = 72, clock=time.time) -> None:
@@ -511,44 +550,15 @@ class StaticGrid:
     # ── Stopping for good ─────────────────────────────────────────────────────
 
     async def shutdown(self) -> dict:
-        """Stop for good and take the grid's orders off the book -- what helm
-        uninstall runs. It waits for a round in flight, so no order goes out
-        after it. Buys and sells go; the stop stays while there is a position,
-        which then remains protected. Every gridstatic order on the coin goes,
-        an earlier grid's too; orders without our tag stay.
-
-        Raises when the book or the position cannot be read: an uninstall that
-        cannot tell what it leaves behind should not go ahead."""
+        """Stop for good and cancel the grid's orders (see cancel_own_orders). It
+        waits for a round in flight, so no order goes out after it."""
         self.stopped = True
         async with self._busy:
-            orders = await self.connector.get_open_orders(self.coin)
-            _, positions = await self.connector.get_account(dex=dex_of(self.coin))
-            position = float((positions.get(self.coin) or {}).get("szi", 0.0))
-            flat = (position == 0 if self.sz_decimals is None
-                    else abs(position) <= 10 ** -self.sz_decimals / 2)
-            cancelled, kept_stop, failed = 0, False, []
-            for o in orders:
-                tag = decode(o.get("cloid"))
-                if tag is None:
-                    continue    # not ours: a manual order or another bot
-                if tag.side == STOP and not flat:
-                    kept_stop = True
-                    continue
-                try:
-                    await self.connector.cancel_order(self.coin, int(o["oid"]))
-                    cancelled += 1
-                except Exception as e:
-                    failed.append(f"{tag.side} {o['oid']}: {describe(e)}")
-
-        msg = f"{self.coin_key} stopped for uninstall: {cancelled} order(s) cancelled"
-        if kept_stop:
-            msg += f", stop-loss kept for the position of {position:g}"
-        if failed:
-            msg += f"; {len(failed)} cancel(s) FAILED: " + "; ".join(failed)
-        (log.error if failed else log.warning)(f"[{self.coin_key}] {msg}")
+            r = await cancel_own_orders(self.connector, self.coin, self.sz_decimals)
+        msg = stop_message(self.coin_key, r)
+        (log.error if r["failed"] else log.warning)(f"[{self.coin_key}] {msg}")
         await self.alerter.send_alert("error", {"coin": self.coin, "message": msg})
-        return {"coin_key": self.coin_key, "coin": self.coin, "cancelled": cancelled,
-                "kept_stop": kept_stop, "position": position, "failed": failed}
+        return {"coin_key": self.coin_key, "coin": self.coin, **r}
 
     # ── The loop and /status ──────────────────────────────────────────────────
 

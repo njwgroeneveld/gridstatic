@@ -224,3 +224,95 @@ def test_stop_route_fails_when_a_grid_could_not_cancel_everything(monkeypatch):
     assert r.json()["stopped"] is False
     assert "timeout" in r.json()["grids"][1]["error"]
     ok.shutdown.assert_awaited_once()            # the other grid still stopped
+
+
+# ── switched-off grids on uninstall ───────────────────────────────────────────
+
+def _tagged(oid, side="BUY"):
+    from src.cloid import encode, fingerprint
+    return {"coin": "xyz:XYZ100", "oid": oid, "cloid": encode(fingerprint("xyz:XYZ100", 29000, 32000, 10, 5), 1, side)}
+
+
+def _clients_with(orders, position=0.0):
+    connector = AsyncMock()
+    connector.get_open_orders.return_value = orders
+    connector.get_account.return_value = (100.0, {"xyz:XYZ100": {"szi": position}} if position else {})
+    connector.cancel_order.return_value = {"status": "ok"}
+    return {"connector": connector, "alerter": AsyncMock()}
+
+
+def test_stop_route_also_cancels_the_orders_of_a_switched_off_grid(monkeypatch):
+    # Switched off, a grid runs no rounds -- but the orders it placed before may
+    # still rest on the exchange, and an uninstall should not leave them there.
+    from fastapi.testclient import TestClient
+    clients = _clients_with([_tagged(77), {"coin": "xyz:XYZ100", "oid": 78, "cloid": None}])
+    monkeypatch.setattr(m, "_grids", [])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ", "xyz:XYZ100")])
+    monkeypatch.setattr(m, "_clients", clients)
+    r = TestClient(m.app).post("/stop")
+    assert r.status_code == 200
+    clients["connector"].cancel_order.assert_awaited_once_with("xyz:XYZ100", 77)   # not the untagged one
+    assert r.json()["grids"][0]["switched_off"] is True
+    assert "switched off" in clients["alerter"].send_alert.call_args.args[1]["message"]
+
+
+def test_a_switched_off_grid_keeps_its_stop_while_there_is_a_position(monkeypatch):
+    from fastapi.testclient import TestClient
+    clients = _clients_with([_tagged(77), _tagged(79, side="STOP")], position=0.0004)
+    monkeypatch.setattr(m, "_grids", [])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ", "xyz:XYZ100")])
+    monkeypatch.setattr(m, "_clients", clients)
+    r = TestClient(m.app).post("/stop")
+    clients["connector"].cancel_order.assert_awaited_once_with("xyz:XYZ100", 77)
+    assert r.json()["grids"][0]["kept_stop"] is True
+
+
+def test_a_coin_with_a_running_grid_is_not_cleared_twice(monkeypatch):
+    from fastapi.testclient import TestClient
+    running = MagicMock(coin_key="NDX-20", coin="xyz:XYZ100")
+    running.shutdown = AsyncMock(return_value={"coin": "xyz:XYZ100", "cancelled": 1, "failed": []})
+    clients = _clients_with([_tagged(77)])
+    monkeypatch.setattr(m, "_grids", [running])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ-OLD", "xyz:XYZ100")])
+    monkeypatch.setattr(m, "_clients", clients)
+    TestClient(m.app).post("/stop")
+    clients["connector"].get_open_orders.assert_not_awaited()
+
+
+def test_stop_route_fails_when_a_switched_off_grids_book_is_unreadable(monkeypatch):
+    from fastapi.testclient import TestClient
+    clients = _clients_with([])
+    clients["connector"].get_open_orders.side_effect = RuntimeError("timeout")
+    monkeypatch.setattr(m, "_grids", [])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ", "xyz:XYZ100")])
+    monkeypatch.setattr(m, "_clients", clients)
+    r = TestClient(m.app).post("/stop")
+    assert r.status_code == 500
+    assert "timeout" in r.json()["grids"][0]["error"]
+
+
+async def test_lifespan_remembers_the_switched_off_grids(monkeypatch, tmp_path):
+    _settings(tmp_path, monkeypatch, _VALID + (
+        "  NASDAQ:\n"
+        "    coin: xyz:XYZ100\n"
+        "    active: false\n"
+        "    allocation_pct: 90\n"
+        "    upper: 32000\n"
+        "    lower: 29000\n"
+        "    num_lines: 10\n"))
+
+    async def fake_wait(name, probe, **kwargs):
+        pass
+
+    monkeypatch.setattr(m, "_wait_for", fake_wait)
+    monkeypatch.setattr(m, "AlerterClient", MagicMock(return_value=AsyncMock()))
+    grid = MagicMock()
+    grid.run_loop = AsyncMock()
+    monkeypatch.setattr(m, "StaticGrid", MagicMock(return_value=grid))
+    m._grids.clear()
+    try:
+        async with m.lifespan(None):
+            assert m._switched_off == [("NASDAQ", "xyz:XYZ100")]
+    finally:
+        m._grids.clear()
+        m._switched_off.clear()
