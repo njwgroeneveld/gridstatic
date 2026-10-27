@@ -114,9 +114,8 @@ You end with a single verdict: done, or what went wrong and where to look.
 6. Follow the log: `kubectl -n gridstatic logs deploy/gridstatic-grid-static -f`. The grid logs
    `started: ...`, then a `BUY` for every cell below the price.
 
-To stop a grid again, set `active: false` and upgrade. It then places nothing new, but its
-orders stay on the exchange: cancel them there, or let `helm uninstall` cancel them later. As
-long as the grid stays in your values file, switched off, the uninstall finds its coin.
+To stop a grid again, set `active: false` and upgrade. grid-static then cancels its buys and
+sells; its stop-loss stays as long as there is a position. Close that position yourself.
 
 | option | |
 |---|---|
@@ -290,11 +289,18 @@ helm upgrade gridstatic oci://ghcr.io/njwgroeneveld/charts/gridstatic \
 ```
 
 > **Changing `coin`, `numLines`, `lower`, `upper` or `leverage` makes a new grid.** Every order
-> carries a fingerprint of exactly those five settings. After the change, the old grid's orders
-> carry a different fingerprint: the bot leaves them alone, but it also holds, because its position no
-> longer adds up. Cancel the old orders and close or keep the old position deliberately before
-> you change them. Changing `allocationPct` or `maxEquityUsd` is safe: the grid does not hold, it
-> only sizes its next buys differently.
+> carries a fingerprint of exactly those five settings. After the upgrade the new grid cancels
+> the old grid's buys and sells on that coin in its first round, and places its own. What the old
+> grid had bought stays as a position that belongs to no cell of the new one: the grid then
+> holds, places no buys and says how much it is about. Close that position on the exchange and
+> it resumes by itself. The old stop-loss stays as long as there is such a position and the new
+> grid has no stop of its own. So change these settings while the grid is flat, if you can.
+> Changing `allocationPct` or `maxEquityUsd` is safe: it only sizes the next buys differently.
+>
+> **Moving a grid to another coin, or switching it off:** keep the old entry in your values file
+> with `active: false`. At its next start grid-static cancels the buys and sells it left on that
+> coin, and a later `helm uninstall` finds it too. An entry you delete is forgotten: its orders
+> stay on the exchange until you cancel them there.
 
 ---
 
@@ -366,7 +372,7 @@ and a `hold_cleared` alert when it resumes. `/status` shows it too.
 | reason | what to do |
 |---|---|
 | the position holds more than the cells account for | a manual position, another bot on the coin, or fills older than `fillLookbackHours`. Close the extra position, or sell it yourself. |
-| orders from an earlier grid on this coin | you changed the grid's bounds, lines or leverage. Cancel the old orders, or restore the old settings. |
+| the position holds more than the cells account for, *most likely what the earlier grid on this coin bought* | you changed the grid's bounds, lines or leverage while it held coin. The old orders are already cancelled; close the old position on the exchange. |
 | the bot's sells and what its cells hold add up to more than the position | someone sold what the bot had a sell for, or closed the position by hand. Cancel the excess sell; an amount without a sell clears once its buy is older than `fillLookbackHours`. |
 | none of the orders placed last round is on the book or filled | the bot reads another account than it trades on. Check `wallet_address`; see [Which key](#which-key). |
 | short position | a grid only ever holds long. Close the short. |
@@ -417,7 +423,7 @@ python3 tools/gridcheck.py --address 0xTHE_ACCOUNT_THE_BOT_TRADES_ON
 
 | check | what it catches |
 |---|---|
-| no orders from an earlier grid | a settings change that left orders behind |
+| no orders from an earlier grid | a settings change whose old orders the bot could not cancel |
 | at most one buy and one sell per cell | duplicate orders |
 | every sell is reduce-only, no buy at or above the price | orders that could open a short or cross the book |
 | the position adds up to the bot's own orders | anything that would make the bot hold |

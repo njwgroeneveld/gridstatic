@@ -316,3 +316,41 @@ async def test_lifespan_remembers_the_switched_off_grids(monkeypatch, tmp_path):
     finally:
         m._grids.clear()
         m._switched_off.clear()
+
+
+# ── switched-off grids at startup ─────────────────────────────────────────────
+
+async def test_startup_cancels_what_a_switched_off_grid_left_behind(monkeypatch):
+    clients = _clients_with([_tagged(77)])
+    monkeypatch.setattr(m, "_grids", [])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ", "xyz:XYZ100")])
+    await m._clear_switched_off(clients["connector"], clients["alerter"], attempts=1, delay=0)
+    clients["connector"].cancel_order.assert_awaited_once_with("xyz:XYZ100", 77)
+    assert "switched off" in clients["alerter"].send_alert.call_args.args[1]["message"]
+
+
+async def test_startup_says_nothing_when_a_switched_off_grid_left_nothing(monkeypatch):
+    # Every restart runs this; after the first clean-up it must stay quiet.
+    clients = _clients_with([])
+    monkeypatch.setattr(m, "_grids", [])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ", "xyz:XYZ100")])
+    await m._clear_switched_off(clients["connector"], clients["alerter"], attempts=1, delay=0)
+    clients["alerter"].send_alert.assert_not_awaited()
+
+
+async def test_startup_leaves_a_coin_with_a_running_grid_to_that_grid(monkeypatch):
+    clients = _clients_with([_tagged(77)])
+    monkeypatch.setattr(m, "_grids", [MagicMock(coin="xyz:XYZ100")])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ-OLD", "xyz:XYZ100")])
+    await m._clear_switched_off(clients["connector"], clients["alerter"], attempts=1, delay=0)
+    clients["connector"].get_open_orders.assert_not_awaited()
+
+
+async def test_startup_retries_and_then_says_what_it_could_not_cancel(monkeypatch):
+    clients = _clients_with([])
+    clients["connector"].get_open_orders.side_effect = RuntimeError("timeout")
+    monkeypatch.setattr(m, "_grids", [])
+    monkeypatch.setattr(m, "_switched_off", [("NASDAQ", "xyz:XYZ100")])
+    await m._clear_switched_off(clients["connector"], clients["alerter"], attempts=2, delay=0)
+    assert clients["connector"].get_open_orders.await_count == 2
+    assert "could not be cancelled" in clients["alerter"].send_alert.call_args.args[1]["message"]

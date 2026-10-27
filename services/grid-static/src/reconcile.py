@@ -105,14 +105,14 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
     # ── Sort our orders into cells ────────────────────────────────────────────
     buys_in: dict[int, list[dict]] = defaultdict(list)
     sells_in: dict[int, list[dict]] = defaultdict(list)
-    earlier_grid: list[dict] = []
+    earlier_grid: list[tuple[dict, object]] = []
     stops_in: list[dict] = []
     for o in orders:
         tag = decode(o.get("cloid"))
         if tag is None:
             continue  # not ours: a manual order or another bot
         if tag.fingerprint != fp or not 0 <= tag.cell < n_cells:
-            earlier_grid.append(o)
+            earlier_grid.append((o, tag))
             continue
         if tag.side == STOP:
             stops_in.append(o)
@@ -165,15 +165,25 @@ def plan(*, levels: list[float], fp: bytes, orders: list[dict],
     covered = sum(_sz(o) for o in sell.values())
     out.residual = position - covered - sum(unsold.values())
 
+    # ── An earlier grid on this coin: its orders go ───────────────────────────
+    # Its settings were changed, so this grid replaces it. Its buys and sells are
+    # cancelled. Its stop stays while there is a position this grid does not
+    # protect with a stop of its own. What it bought is no cell's here: that
+    # remainder holds the grid below until it is closed by hand.
+    for o, tag in earlier_grid:
+        if tag.side == STOP and position > tol and stop_loss is None:
+            continue
+        out.cancels.append(Cancel(o["oid"], tag.cell, tag.side, "from an earlier grid"))
+
     # ── Hold: no new buys while anything is unexplained ───────────────────────
     if position < -tol:
         out.hold = f"short position of {position} -- a grid only ever holds long"
-    elif earlier_grid:
-        out.hold = (f"{len(earlier_grid)} order(s) from an earlier grid on this coin -- "
-                    f"cancel them, or restore the old settings")
     elif out.residual > tol:
         out.hold = (f"position {position} has {out.residual:.6g} that no cell accounts for "
                     f"(resting sells {covered:.6g}, unsold {sum(unsold.values()):.6g})")
+        if earlier_grid:
+            out.hold += (" -- most likely what the earlier grid on this coin bought; its orders "
+                         "are cancelled. Close that position on the exchange; the grid resumes then")
     elif out.residual < -tol:
         out.hold = (f"resting sells of {covered:.6g} and unsold {sum(unsold.values()):.6g} "
                     f"exceed what the position {position} can cover")

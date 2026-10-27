@@ -95,6 +95,40 @@ def _validate(cfg: dict) -> tuple[list[tuple[str, dict]], list[str]]:
     return grids, skipped
 
 
+async def _clear_switched_off(connector, alerter, attempts: int = 5, delay: float = 30) -> None:
+    """At startup: cancel the buys and sells a grid left behind when it was switched
+    off. Its stop stays while there is a position. Says something only when there
+    was something to cancel, and keeps trying a few times when the exchange does
+    not answer -- in the background, so the running grids do not wait for it."""
+    active = {g.coin for g in _grids}
+    todo = [(k, c) for k, c in _switched_off if c not in active]
+    for attempt in range(attempts):
+        left = []
+        for key, coin in todo:
+            try:
+                r = await cancel_own_orders(connector, coin)
+            except Exception as e:
+                log.warning(f"[{key}] switched off; its orders could not be read yet: {describe(e)}")
+                left.append((key, coin))
+                continue
+            if r["failed"]:
+                left.append((key, coin))
+            if r["cancelled"] or r["failed"] or r["kept_stop"]:
+                msg = stop_message(f"{key} is switched off and", r).replace(
+                    " stopped for uninstall:", "")
+                (log.error if r["failed"] else log.warning)(f"[{key}] {msg}")
+                await alerter.send_alert("error", {"coin": coin, "message": msg})
+        if not left:
+            return
+        todo = left
+        await asyncio.sleep(delay)
+    for key, coin in todo:
+        msg = (f"{key} is switched off, but its orders on {coin} could not be cancelled -- "
+               f"cancel them on the exchange")
+        log.error(f"[{key}] {msg}")
+        await alerter.send_alert("error", {"coin": coin, "message": msg})
+
+
 async def _wait_for(name: str, probe, attempts: int = 30, delay: float = 2.0) -> None:
     """Wait until `probe()` returns without raising, or give up loudly."""
     for attempt in range(attempts):
@@ -134,6 +168,7 @@ async def lifespan(_app: FastAPI):
 
     await _wait_for("connector", connector.get_mids)
     tasks = [asyncio.create_task(g.run_loop()) for g in _grids]
+    tasks.append(asyncio.create_task(_clear_switched_off(connector, alerter)))
     log.info(f"Started {len(_grids)} grid(s)")
     if not _grids:
         log.warning("No active grid: nothing trades. Set active: true on a grid in your "
